@@ -8,9 +8,19 @@ interface Color {
   a: number;
 }
 
-// Define colors outside component to keep them stable
-const cFurther: Color = { h: 230, s: 25, b: 90, a: 360 };
-const cCloser: Color = { h: 210, s: 70, b: 10, a: 360 };
+// Define color palette for gradual earth tone transition
+// Earth yellow (far) → Green (middle) → Earth yellow (close)
+const colorPalette: Color[] = [
+  { h: 35, s: 30, b: 25, a: 360 },   // Dark earth yellow (furthest)
+  { h: 40, s: 25, b: 30, a: 360 },   // Dark warm earth tone
+  { h: 60, s: 20, b: 35, a: 360 },   // Dark muted yellow-green
+  { h: 90, s: 25, b: 30, a: 360 },   // Dark muted olive green
+  { h: 120, s: 30, b: 25, a: 360 },  // Dark muted forest green
+  { h: 150, s: 25, b: 30, a: 360 },  // Dark muted teal-green
+  { h: 180, s: 20, b: 35, a: 360 },  // Dark muted blue-green
+  { h: 35, s: 35, b: 20, a: 360 }    // Very dark earth yellow (closest)
+];
+
 const cMist: Color = { h: 0, s: 0, b: 100, a: 360 };
 
 // Motion + cylinder parameters
@@ -280,8 +290,7 @@ export default function App() {
                   height={layerHeight}
                   layerIndex={layer.index}
                   referenceY={uniformReferenceY}
-                  closerColor={cCloser}
-                  furtherColor={cFurther}
+                  colorPalette={colorPalette}
                   mistColor={cMist}
                   seed={seed}
                   maxIndex={maxIndex}

@@ -13,8 +13,7 @@ export interface MountainLayerProps {
   height: number;
   layerIndex: number;
   referenceY: number;
-  closerColor: Color;
-  furtherColor: Color;
+  colorPalette: Color[];
   mistColor: Color;
   seed: number;
   maxIndex: number;
@@ -26,8 +25,7 @@ function MountainLayerImpl({
   height,
   layerIndex,
   referenceY,
-  closerColor,
-  furtherColor,
+  colorPalette,
   mistColor,
   seed,
   maxIndex,
@@ -90,6 +88,23 @@ function MountainLayerImpl({
       };
     };
 
+    // Function to interpolate between multiple colors based on depth
+    const getColorForDepth = (depth: number, palette: Color[]): Color => {
+      if (depth <= 0) return palette[0];
+      if (depth >= 1) return palette[palette.length - 1];
+      
+      const scaledDepth = depth * (palette.length - 1);
+      const index = Math.floor(scaledDepth);
+      const t = scaledDepth - index;
+      
+      if (index >= palette.length - 1) return palette[palette.length - 1];
+      
+      const c1 = palette[index];
+      const c2 = palette[index + 1];
+      
+      return lerpColor(c1, c2, t);
+    };
+
     // Generate random parameters for this mountain
     const a = Math.random() * width - width / 2;
     const b = Math.random() * width - width / 2;
@@ -110,8 +125,10 @@ function MountainLayerImpl({
       y += dAmp * amplitudeFactor * noise.noise((1.2 * dx) / amplitudeFactor + e, 0);
       y += 1.7 * amplitudeFactor * noise.noise(10 * dx, 0);
 
-      const t = depth;
-      const lerped = lerpColor(furtherColor, closerColor, t);
+      // Add horizontal color variation to reduce banding
+      const horizontalVariation = noise.noise(dx * 0.1, layerIndex) * 0.1; // Small variation
+      const t = Math.max(0, Math.min(1, depth + horizontalVariation));
+      const lerped = getColorForDepth(t, colorPalette);
       
       ctx.strokeStyle = hsbToRgb(lerped.h, lerped.s, lerped.b, lerped.a);
       ctx.lineWidth = 2;
@@ -123,18 +140,27 @@ function MountainLayerImpl({
       dx += 0.02;
     }
 
-    // Add mist
-    for (let i = height; i > referenceY; i -= 3) {
-      const alfa = map(i, referenceY, height, 0, 360 / (amplitudeFactor + 1));
-      ctx.strokeStyle = hsbToRgb(mistColor.h, mistColor.s, mistColor.b, alfa);
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(width, i);
-      ctx.stroke();
+    // Add mist effect that varies by layer depth
+    const mistHeight = height - referenceY;
+    const mistStartY = referenceY - (mistHeight * 0.2); // Start mist higher up
+    const gradient = ctx.createLinearGradient(0, mistStartY, 0, height);
+    
+    // Make mist more prominent for closer layers (higher layerIndex)
+    const mistIntensity = Math.min(1, (layerIndex / maxIndex) * 1.5); // Closer layers get more mist
+    const baseOpacity = 40 + (mistIntensity * 60); // 40-100 range
+    
+    // Create smooth gradient stops with depth-based opacity
+    for (let i = 0; i <= 20; i++) {
+      const y = mistStartY + (height - mistStartY) * i / 20;
+      const alfa = map(y, mistStartY, height, 0, baseOpacity);
+      const normalizedAlfa = alfa / 360;
+      gradient.addColorStop(i / 20, `rgba(255, 255, 255, ${normalizedAlfa})`);
     }
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, mistStartY, width, height - mistStartY);
 
-  }, [width, height, layerIndex, referenceY, closerColor, furtherColor, mistColor, seed, maxIndex]);
+  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, amplitude]);
 
   return (
     <canvas
