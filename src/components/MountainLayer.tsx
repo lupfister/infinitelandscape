@@ -18,6 +18,7 @@ export interface MountainLayerProps {
   mistColor: Color;
   seed: number;
   maxIndex: number;
+  amplitude?: number; // uniform amplitude factor across layers; default matches previous closest layer
 }
 
 function MountainLayerImpl({
@@ -29,7 +30,8 @@ function MountainLayerImpl({
   furtherColor,
   mistColor,
   seed,
-  maxIndex
+  maxIndex,
+  amplitude
 }: MountainLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -97,16 +99,16 @@ function MountainLayerImpl({
 
     let dx = 0;
     const depth = Math.max(0.0001, layerIndex / maxIndex);
-    // Scale depth to preserve previous visual proportions (baseline was 9 layers)
-    const effectiveJ = depth * 9;
+    // Uniform amplitude across layers; default equals previous closest layer (~9)
+    const amplitudeFactor = amplitude ?? 9;
 
     // Draw mountain
     for (let x = 0; x < width; x++) {
       let y = referenceY;
-      y += 10 * effectiveJ * Math.sin((2 * dx) / effectiveJ + a);
-      y += cAmp * effectiveJ * Math.sin((5 * dx) / effectiveJ + b);
-      y += dAmp * effectiveJ * noise.noise((1.2 * dx) / effectiveJ + e, 0);
-      y += 1.7 * effectiveJ * noise.noise(10 * dx, 0);
+      y += 10 * amplitudeFactor * Math.sin((2 * dx) / amplitudeFactor + a);
+      y += cAmp * amplitudeFactor * Math.sin((5 * dx) / amplitudeFactor + b);
+      y += dAmp * amplitudeFactor * noise.noise((1.2 * dx) / amplitudeFactor + e, 0);
+      y += 1.7 * amplitudeFactor * noise.noise(10 * dx, 0);
 
       const t = depth;
       const lerped = lerpColor(furtherColor, closerColor, t);
@@ -123,7 +125,7 @@ function MountainLayerImpl({
 
     // Add mist
     for (let i = height; i > referenceY; i -= 3) {
-      const alfa = map(i, referenceY, height, 0, 360 / (effectiveJ + 1));
+      const alfa = map(i, referenceY, height, 0, 360 / (amplitudeFactor + 1));
       ctx.strokeStyle = hsbToRgb(mistColor.h, mistColor.s, mistColor.b, alfa);
       ctx.lineWidth = 3;
       ctx.beginPath();
