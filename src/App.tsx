@@ -19,7 +19,7 @@ const EASE = 0.12;
 const MOMENTUM_DECAY = 0.94; // 0..1, lower = faster stop
 const MIN_VELOCITY = 0.02; // threshold to stop momentum
 const HEIGHT_MULTIPLIER = 1.5; // increase mountain canvas height
-const GLOBAL_VERTICAL_OFFSET = 1000; // shift entire scene upward
+const GLOBAL_VERTICAL_OFFSET = 600; // shift entire scene upward
 
 // Cylinder layout controls
 const ROTATION_SPEED = 0.0002; // radians per virtual scroll unit
@@ -27,14 +27,20 @@ const ROTATION_SPEED = 0.0002; // radians per virtual scroll unit
 const DEPTH_Y_PARALLAX = 0; // vertical parallax by depth (keep 0 to keep horizon stable)
 
 // TEMP: Global debug scale for the whole scene (set to 1 to disable)
-const DEBUG_SCENE_SCALE = .9;
+const DEBUG_SCENE_SCALE = 1;
+
+// Oval shape controls
+const OVAL_ELLIPTICAL_FACTOR = 3; // 0 = circular, 1 = very flat oval
+
+// Culling controls
+const CULLING_FRONTNESS_THRESHOLD = 0.1; // Hide layers with frontness below this value (0 = back, 1 = front)
 
 // Uniform shape amplitude for all layers (default ~closest-layer amplitude)
 const UNIFORM_MOUNTAIN_AMPLITUDE = 9;
 
 // Cylinder radius controls (vertical rotation amplitude)
-const CYLINDER_RADIUS_FRACTION = 3; // fraction of viewport height
-const CYLINDER_RADIUS_MAX = 1500; // hard cap to avoid excessive travel
+const CYLINDER_RADIUS_FRACTION = 10; // fraction of viewport height
+const CYLINDER_RADIUS_MAX = 10000; // hard cap to avoid excessive travel
 
 export default function App() {
   const [seed, setSeed] = useState(Math.random() * 10000);
@@ -43,6 +49,10 @@ export default function App() {
   const velocityRef = useRef(0);
   const touchStartYRef = useRef<number | null>(null);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  
+  // Debug rotation state
+  const [debugRotation, setDebugRotation] = useState(false);
+  const [debugRotationAngle, setDebugRotationAngle] = useState(45); // degrees
 
   useEffect(() => {
     const handleResize = () => {
@@ -75,7 +85,7 @@ export default function App() {
     return () => cancelAnimationFrame(rafId);
   }, [virtualScroll]);
 
-  const NUM_LAYERS = 30;
+  const NUM_LAYERS = 60;
 
   // Memoize mountain layers calculation so it doesn't recreate on every render
   const mountainLayers = useMemo(() => {
@@ -114,7 +124,17 @@ export default function App() {
     e.preventDefault();
     // Wheel up (negative deltaY) -> forward
     const delta = -e.deltaY * SCROLL_SENSITIVITY;
-    velocityRef.current += delta;
+    
+    // Apply speed multiplier based on current scroll position using oval movement
+    const currentRotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    const rawSin = Math.sin(currentRotation);
+    const ovalVerticalPosition = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 1 / (1 + OVAL_ELLIPTICAL_FACTOR)) * (1 - OVAL_ELLIPTICAL_FACTOR * 0.3);
+    const topThreshold = 0.6;
+    const speedMultiplier = Math.abs(ovalVerticalPosition) > topThreshold 
+      ? 1 - (Math.abs(ovalVerticalPosition) - topThreshold) / (1 - topThreshold) * 0.8
+      : 1;
+    
+    velocityRef.current += delta * speedMultiplier;
   };
 
   const handleTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
@@ -127,8 +147,18 @@ export default function App() {
     if (touchStartYRef.current == null) return;
     const currentY = e.touches[0].clientY;
     const delta = currentY - touchStartYRef.current;
+    
+    // Apply speed multiplier based on current scroll position using oval movement
+    const currentRotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    const rawSin = Math.sin(currentRotation);
+    const ovalVerticalPosition = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 1 / (1 + OVAL_ELLIPTICAL_FACTOR)) * (1 - OVAL_ELLIPTICAL_FACTOR * 0.3);
+    const topThreshold = 0.6;
+    const speedMultiplier = Math.abs(ovalVerticalPosition) > topThreshold 
+      ? 1 - (Math.abs(ovalVerticalPosition) - topThreshold) / (1 - topThreshold) * 0.8
+      : 1;
+    
     // Swipe up (negative delta) moves forward
-    velocityRef.current += delta * SCROLL_SENSITIVITY;
+    velocityRef.current += delta * SCROLL_SENSITIVITY * speedMultiplier;
     touchStartYRef.current = currentY;
   };
 
@@ -147,10 +177,23 @@ export default function App() {
       aria-label="Infinite landscape parallax viewer"
       tabIndex={0}
       onKeyDown={(e) => {
+        // Apply speed multiplier based on current scroll position using oval movement
+        const currentRotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+        const rawSin = Math.sin(currentRotation);
+        const ovalVerticalPosition = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 1 / (1 + OVAL_ELLIPTICAL_FACTOR)) * (1 - OVAL_ELLIPTICAL_FACTOR * 0.3);
+        const topThreshold = 0.6;
+        const speedMultiplier = Math.abs(ovalVerticalPosition) > topThreshold 
+          ? 1 - (Math.abs(ovalVerticalPosition) - topThreshold) / (1 - topThreshold) * 0.8
+          : 1;
+        
         if (e.key === 'ArrowUp' || e.key === 'w') {
-          velocityRef.current += 20;
+          velocityRef.current += 20 * speedMultiplier;
         } else if (e.key === 'ArrowDown' || e.key === 's') {
-          velocityRef.current -= 20;
+          velocityRef.current -= 20 * speedMultiplier;
+        } else if (e.key === 'd') {
+          setDebugRotation(!debugRotation);
+        } else if (e.key === 'r') {
+          setDebugRotationAngle(prev => (prev + 15) % 360);
         }
       }}
     >
@@ -168,20 +211,58 @@ export default function App() {
         {(() => {
           const maxIndex = NUM_LAYERS;
           const layerHeight = viewport.height * HEIGHT_MULTIPLIER;
-          const rotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+          const baseRotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
           const verticalAmplitude = Math.min(CYLINDER_RADIUS_MAX, viewport.height * CYLINDER_RADIUS_FRACTION);
 
           const uniformReferenceY = Math.max(100, viewport.height - 200);
-          return mountainLayers.map((layer) => {
-            const angle = ((layer.index / maxIndex) * Math.PI * 2) + rotation;
-            const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
-            const yOffset = Math.sin(angle) * verticalAmplitude;
-            const translateY = GLOBAL_VERTICAL_OFFSET + yOffset + (1 - frontness) * DEPTH_Y_PARALLAX;
-            // keep all layers same height/size
+          return mountainLayers
+            .map((layer) => {
+              const baseAngle = (layer.index / maxIndex) * Math.PI * 2;
+              const angle = baseAngle + baseRotation;
+              const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
+              
+              // Cull layers at the bottom of the cylinder rotation
+              if (frontness < CULLING_FRONTNESS_THRESHOLD) {
+                return null;
+              }
+              
+              // Create oval movement with slower, longer movement at top and bottom
+              const normalizedAngle = (angle % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+              
+              // Create oval mapping: slower movement at top (0°) and bottom (180°)
+              // Use a modified sine function that creates longer plateaus at extremes
+              const rawSin = Math.sin(normalizedAngle);
+              const ovalVerticalPosition = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 1 / (1 + OVAL_ELLIPTICAL_FACTOR)) * (1 - OVAL_ELLIPTICAL_FACTOR * 0.3);
+              const yOffset = ovalVerticalPosition * verticalAmplitude;
+              
+              const translateY = GLOBAL_VERTICAL_OFFSET + yOffset + (1 - frontness) * DEPTH_Y_PARALLAX;
+              
+              // Calculate horizontal offset for debug rotation
+              let horizontalOffset = 0;
+              if (debugRotation) {
+                const rotationRad = (debugRotationAngle * Math.PI) / 180;
+                // Apply horizontal rotation based on frontness and rotation angle
+                // This creates a fake horizontal rotation effect
+                const horizontalRotationFactor = Math.sin(rotationRad) * frontness;
+                horizontalOffset = horizontalRotationFactor * viewport.width * 0.3;
+              }
+              
+              // Base z-index on frontness with better separation to prevent z-fighting
+              // Use higher precision and ensure each layer gets a unique z-index
+              // Add depth-based offset for better layer separation during transitions
+              const depthOffset = (maxIndex - layer.index) * 100;
+              const zIndex = 1000 + Math.floor(frontness * 100000) + layer.index * 10 + depthOffset;
 
-            const zIndex = 100 + Math.round(frontness * 1000) + layer.index; // stable tie-breaker
-
-            return (
+              return {
+                layer,
+                frontness,
+                translateY,
+                horizontalOffset,
+                zIndex
+              };
+            })
+            .filter((item): item is NonNullable<typeof item> => item !== null)
+            .map(({ layer, frontness, translateY, horizontalOffset, zIndex }) => (
               <div
                 key={layer.index}
                 className="absolute top-0 left-0"
@@ -189,7 +270,7 @@ export default function App() {
                   width: `${viewport.width}px`,
                   height: `${layerHeight}px`,
                   zIndex,
-                  transform: `translateY(${translateY}px)`,
+                  transform: `translate3d(${horizontalOffset}px, ${translateY}px, 0)`,
                   transformOrigin: 'center bottom',
                   willChange: 'transform'
                 }}
@@ -207,10 +288,35 @@ export default function App() {
                   amplitude={UNIFORM_MOUNTAIN_AMPLITUDE}
                 />
               </div>
-            );
-          });
+            ));
         })()}
       </div>
+      
+      {/* Debug UI */}
+      {debugRotation && (
+        <div className="absolute top-4 left-4 bg-black bg-opacity-75 text-white p-4 rounded-lg font-mono text-sm">
+          <div className="mb-2">
+            <strong>Debug Rotation Mode</strong>
+          </div>
+          <div>Angle: {debugRotationAngle}°</div>
+          <div className="text-xs text-gray-300 mt-2">
+            Press 'D' to toggle debug mode<br/>
+            Press 'R' to rotate (+15°)
+          </div>
+        </div>
+      )}
+      
+      {/* Debug rotation indicator line */}
+      {debugRotation && (
+        <div 
+          className="absolute top-1/2 left-0 w-full h-0.5 bg-red-500 opacity-50 pointer-events-none"
+          style={{
+            transform: `rotate(${debugRotationAngle}deg)`,
+            transformOrigin: 'center',
+            zIndex: 10000
+          }}
+        />
+      )}
     </div>
   );
 }
