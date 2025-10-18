@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, memo } from 'react';
+import React, { useRef, useEffect, memo, useState } from 'react';
 import PerlinNoise from '../utils/perlin';
 
 interface Color {
@@ -7,6 +7,13 @@ interface Color {
   b: number;
   a: number;
 }
+
+// Group colors by hue families for clustering
+const COLOR_FAMILIES = {
+  blues: ['#293434', '#31475B', '#5C758E'],           // Blue-gray family
+  browns: ['#5A3B24', '#8D5829', '#7F6734', '#9B7D4D'], // Brown family
+  greens: ['#414C39', '#5C5D3A', '#7B7442']           // Green family
+};
 
 export interface MountainLayerProps {
   width: number;
@@ -36,14 +43,37 @@ function MountainLayerImpl({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shapePathRef = useRef<Path2D | null>(null);
   const shapeGeneratedRef = useRef(false);
+  const lastColorRef = useRef<string | null>(null);
+  const lastZIndexRef = useRef<number | null>(null);
+  const [rockTexture, setRockTexture] = useState<HTMLImageElement | null>(null);
+  const [textureNoise, setTextureNoise] = useState<{ rotation: number; scale: number } | null>(null);
+
+  // Load rock texture
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setRockTexture(img);
+    img.src = '/rock.png';
+  }, []);
+
+  // Generate random rotation and scale noise for this layer instance
+  useEffect(() => {
+    const rotation = (Math.random() - 0.5) * 60; // -30 to +30 degrees
+    const scale = (0.8 + Math.random() * 0.4) * 2; // 1.6 to 2.4 scale (2x overall)
+    setTextureNoise({ rotation, scale });
+  }, [layerIndex, seed]);
 
   // Generate mountain shape once and store it
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || shapeGeneratedRef.current) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Reset generation state when seed changes (for regeneration)
+    shapeGeneratedRef.current = false;
+    lastColorRef.current = null;
+    lastZIndexRef.current = null;
 
     const noise = new PerlinNoise(seed + layerIndex);
 
@@ -122,33 +152,37 @@ function MountainLayerImpl({
     return start2 + (stop2 - start2) * ((value - start1) / (stop1 - start1));
   };
 
-  const lerpColor = (c1: Color, c2: Color, t: number): Color => {
-    return {
-      h: c1.h + (c2.h - c1.h) * t,
-      s: c1.s + (c2.s - c1.s) * t,
-      b: c1.b + (c2.b - c1.b) * t,
-      a: c1.a + (c2.a - c1.a) * t
-    };
+  // Generate a random color for this layer based on layerIndex and seed
+  // with clustering to make similar hues appear near each other
+  const getRandomColorForLayer = (layerIndex: number, seed: number): string => {
+    // Create a base seed for this layer
+    const baseSeed = (layerIndex * 7 + seed) % 1000;
+    
+    // Determine which color family to use based on layer index and seed
+    // This creates "zones" of similar colors
+    const familySeed = Math.floor((layerIndex + seed * 0.1) / 3) % 3; // Changes every ~3 layers
+    const familyNames = Object.keys(COLOR_FAMILIES);
+    const selectedFamily = familyNames[familySeed] as keyof typeof COLOR_FAMILIES;
+    const familyColors = COLOR_FAMILIES[selectedFamily];
+    
+    // Add some randomness within the family, but with bias towards similar colors
+    const colorIndex = Math.floor((baseSeed + layerIndex * 0.3) % familyColors.length);
+    
+    // Occasionally (20% chance) pick from a different family for variety
+    if (baseSeed % 100 < 20) {
+      const otherFamilies = familyNames.filter(name => name !== selectedFamily);
+      const randomFamily = otherFamilies[Math.floor(baseSeed / 100) % otherFamilies.length] as keyof typeof COLOR_FAMILIES;
+      const randomFamilyColors = COLOR_FAMILIES[randomFamily];
+      const randomColorIndex = Math.floor(baseSeed / 10) % randomFamilyColors.length;
+      return randomFamilyColors[randomColorIndex];
+    }
+    
+    return familyColors[colorIndex];
   };
 
-  // Function to interpolate between multiple colors based on depth
-  const getColorForDepth = (depth: number, palette: Color[]): Color => {
-    if (depth <= 0) return palette[0];
-    if (depth >= 1) return palette[palette.length - 1];
-    
-    const scaledDepth = depth * (palette.length - 1);
-    const index = Math.floor(scaledDepth);
-    const t = scaledDepth - index;
-    
-    if (index >= palette.length - 1) return palette[palette.length - 1];
-    
-    const c1 = palette[index];
-    const c2 = palette[index + 1];
-    
-    return lerpColor(c1, c2, t);
-  };
 
-  // Separate effect for color updates
+
+  // Separate effect for color updates with caching
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !shapePathRef.current) return;
@@ -156,98 +190,76 @@ function MountainLayerImpl({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Check if we need to redraw (only if color, z-index, or seed changed)
+    const currentColor = lastColorRef.current;
+    const currentZIndex = lastZIndexRef.current;
+    const randomColor = getRandomColorForLayer(layerIndex, seed);
+    
+    if (currentColor && currentZIndex === zIndex && currentColor.includes(randomColor)) {
+      return; // No need to redraw
+    }
+
     // Clear canvas with transparency
     ctx.clearRect(0, 0, width, height);
 
-    const depth = Math.max(0.0001, layerIndex / maxIndex);
-
-    // Get color influenced by depth and nearby layers with some randomness
-    const getInfluencedColor = (layerIndex: number, maxIndex: number, palette: Color[]): Color => {
-      // Base color from depth
-      const baseColor = getColorForDepth(depth, palette);
-      
-      // Add randomness based on layer index for consistency
-      const randomSeed = seed + layerIndex;
-      const random = new PerlinNoise(randomSeed);
-      
-      // Random variation in hue (±30 degrees), saturation (±20%), brightness (±15%)
-      const hueVariation = (random.noise(layerIndex * 0.1, 0) - 0.5) * 60; // -30 to +30
-      const satVariation = (random.noise(layerIndex * 0.1, 1) - 0.5) * 40; // -20 to +20
-      const brightVariation = (random.noise(layerIndex * 0.1, 2) - 0.5) * 30; // -15 to +15
-      
-      // Influence from nearby layers (weighted average)
-      const influenceRadius = 3; // How many layers to consider
-      let influencedH = baseColor.h;
-      let influencedS = baseColor.s;
-      let influencedB = baseColor.b;
-      
-      // Look at nearby layers and blend their colors
-      for (let i = Math.max(1, layerIndex - influenceRadius); i <= Math.min(maxIndex, layerIndex + influenceRadius); i++) {
-        if (i === layerIndex) continue;
-        
-        const nearbyDepth = Math.max(0.0001, i / maxIndex);
-        const nearbyColor = getColorForDepth(nearbyDepth, palette);
-        
-        // Weight decreases with distance
-        const distance = Math.abs(i - layerIndex);
-        const weight = Math.max(0, 1 - distance / influenceRadius) * 0.3; // Max 30% influence
-        
-        influencedH += (nearbyColor.h - baseColor.h) * weight;
-        influencedS += (nearbyColor.s - baseColor.s) * weight;
-        influencedB += (nearbyColor.b - baseColor.b) * weight;
+    // Get gray color based on z-index (distance from camera)
+    const getGrayColorForZIndex = (zIndex: number | undefined, palette: Color[]): Color => {
+      if (zIndex === undefined) {
+        // Fallback to middle gray if no z-index
+        return palette[Math.floor(palette.length / 2)];
       }
       
-      // Apply random variations
-      let finalH = (influencedH + hueVariation + 360) % 360;
-      let finalS = Math.max(0, Math.min(100, influencedS + satVariation));
-      let finalB = Math.max(0, Math.min(100, influencedB + brightVariation));
+      // Normalize z-index to 0-1 range for color selection
+      // Higher z-index values (closer) should get darker grays
+      // Lower z-index values (distant) should get lighter grays
+      const minZIndex = 1000;
+      const maxZIndex = 200000;
+      const normalizedZIndex = Math.max(0, Math.min(1, (zIndex - minZIndex) / (maxZIndex - minZIndex)));
       
-      // Apply atmospheric perspective based on z-index: lower z-index values (distant) become less saturated and more blue
-      if (zIndex !== undefined) {
-        // Normalize z-index to 0-1 range for atmospheric effect calculation
-        // Lower z-index values should have stronger atmospheric effect
-        // Assuming z-index ranges roughly from 1000 to 200000+ based on the App.tsx calculation
-        const minZIndex = 1000;
-        const maxZIndex = 200000;
-        const normalizedZIndex = Math.max(0, Math.min(1, (zIndex - minZIndex) / (maxZIndex - minZIndex)));
-        
-        // Invert so that lower z-index (distant) gets higher atmospheric effect
-        const atmosphericEffect = 1 - normalizedZIndex; // 1 for furthest (low z-index), 0 for closest (high z-index)
-        
-        // Only apply atmospheric effect if the layer is sufficiently distant
-        const atmosphericThreshold = 0.3; // Only apply to layers with z-index in bottom 30%
-        if (atmosphericEffect > atmosphericThreshold) {
-          // Reduce saturation for distant layers
-          const saturationReduction = (atmosphericEffect - atmosphericThreshold) / (1 - atmosphericThreshold) * 0.6; // Up to 60% reduction
-          finalS = finalS * (1 - saturationReduction);
-          
-          // Shift hue towards blue for distant layers
-          // Shift hue towards blue (around 240 degrees)
-          const blueHue = 240;
-          const hueDiff = ((blueHue - finalH + 180) % 360) - 180;
-          const hueShift = (atmosphericEffect - atmosphericThreshold) / (1 - atmosphericThreshold) * 0.3;
-          finalH = (finalH + hueDiff * hueShift + 360) % 360;
-          
-          // Slightly increase brightness for distant layers to simulate atmospheric scattering
-          const brightnessIncrease = (atmosphericEffect - atmosphericThreshold) / (1 - atmosphericThreshold) * 0.1; // Up to 10% increase
-          finalB = Math.min(100, finalB + brightnessIncrease * 100);
-        }
-      }
+      // Map normalized z-index to palette index
+      // Higher z-index (closer) maps to darker colors (lower palette index)
+      // Lower z-index (distant) maps to lighter colors (higher palette index)
+      const paletteIndex = Math.floor((1 - normalizedZIndex) * (palette.length - 1));
+      const clampedIndex = Math.max(0, Math.min(palette.length - 1, paletteIndex));
       
-      return {
-        h: finalH,
-        s: finalS,
-        b: finalB,
-        a: baseColor.a
-      };
+      return palette[clampedIndex];
     };
     
-    const solidColor = getInfluencedColor(layerIndex, maxIndex, colorPalette);
+    const solidColor = getGrayColorForZIndex(zIndex, colorPalette);
     const solidColorRgb = hsbToRgb(solidColor.h, solidColor.s, solidColor.b, solidColor.a);
 
     // Draw mountain shape with solid color using stored path
     ctx.fillStyle = solidColorRgb;
     ctx.fill(shapePathRef.current!);
+
+    // Apply random color overlay with blend mode
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.fillStyle = randomColor;
+    ctx.fill(shapePathRef.current!);
+    
+    // Apply rock texture with color dodge blend mode
+    if (rockTexture && textureNoise) {
+      ctx.globalCompositeOperation = 'color-dodge';
+      ctx.globalAlpha = 0.1; // Reduce opacity by half
+      ctx.save();
+      ctx.clip(shapePathRef.current!);
+      
+      // Apply transformations for rotation and scale
+      const centerX = width / 2;
+      const centerY = height / 2;
+      
+      ctx.translate(centerX, centerY);
+      ctx.rotate((textureNoise.rotation * Math.PI) / 180); // Convert degrees to radians
+      ctx.scale(textureNoise.scale, textureNoise.scale);
+      ctx.translate(-centerX, -centerY);
+      
+      ctx.drawImage(rockTexture, 0, 0, width, height);
+      ctx.restore();
+      ctx.globalAlpha = 1; // Reset alpha
+    }
+    
+    // Reset blend mode for subsequent operations
+    ctx.globalCompositeOperation = 'source-over';
 
     // Add mist effect that varies by layer depth
     const mistHeight = height - referenceY;
@@ -258,18 +270,20 @@ function MountainLayerImpl({
     const mistIntensity = Math.min(1, (layerIndex / maxIndex) * 1.5); // Closer layers get more mist
     const baseOpacity = 40 + (mistIntensity * 60); // 40-100 range
     
-    // Create smooth gradient stops with depth-based opacity
-    for (let i = 0; i <= 20; i++) {
-      const y = mistStartY + (height - mistStartY) * i / 20;
-      const alfa = map(y, mistStartY, height, 0, baseOpacity);
-      const normalizedAlfa = alfa / 360;
-      gradient.addColorStop(i / 20, `rgba(255, 255, 255, ${normalizedAlfa})`);
-    }
+    // Create simple 2-stop gradient
+    const startOpacity = 0;
+    const endOpacity = baseOpacity / 240;
+    gradient.addColorStop(0, `rgba(255, 255, 255, ${startOpacity})`);
+    gradient.addColorStop(1, `rgba(255, 255, 255, ${endOpacity})`);
     
     ctx.fillStyle = gradient;
     ctx.fillRect(0, mistStartY, width, height - mistStartY);
 
-  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex]);
+    // Update cache
+    lastColorRef.current = `${solidColorRgb}-${randomColor}`;
+    lastZIndexRef.current = zIndex || 0;
+
+  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex, rockTexture, textureNoise]);
 
   return (
     <canvas

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import MountainLayer from './components/MountainLayer';
+import GodRays from './components/GodRays';
 
 interface Color {
   h: number;
@@ -8,43 +9,52 @@ interface Color {
   a: number;
 }
 
-// Define color palette for gradual earth tone transition
-// Rich earthy progression: deep browns → warm oranges → golden yellows → olive greens → forest tones
-const colorPalette: Color[] = [
-  { h: 15, s: 45, b: 12, a: 360 },   // Deep reddish brown (furthest)
-  { h: 25, s: 40, b: 15, a: 360 },   // Rich sienna brown
-  { h: 30, s: 35, b: 18, a: 360 },   // Warm terracotta
-  { h: 35, s: 40, b: 15, a: 360 },   // Dark earth orange
-  { h: 40, s: 30, b: 27, a: 360 },   // Light muted orange
-  { h: 45, s: 35, b: 18, a: 360 },   // Burnt orange
-  { h: 50, s: 25, b: 30, a: 360 },   // Soft peachy orange
-  { h: 55, s: 30, b: 21, a: 360 },   // Golden brown
-  { h: 60, s: 20, b: 33, a: 360 },   // Light muted golden yellow
-  { h: 65, s: 25, b: 24, a: 360 },   // Warm golden yellow
-  { h: 70, s: 15, b: 36, a: 360 },   // Very light muted yellow
-  { h: 75, s: 20, b: 21, a: 360 },   // Muted yellow-green
-  { h: 80, s: 18, b: 30, a: 360 },   // Light olive yellow
-  { h: 85, s: 25, b: 18, a: 360 },   // Olive green
-  { h: 95, s: 30, b: 15, a: 360 },   // Deep olive
-  { h: 110, s: 35, b: 18, a: 360 },  // Forest green
-  { h: 130, s: 30, b: 15, a: 360 },  // Dark forest green
-  { h: 150, s: 25, b: 18, a: 360 },  // Muted teal-green
-  { h: 170, s: 20, b: 21, a: 360 },  // Blue-green
-  { h: 20, s: 50, b: 11, a: 360 }    // Very dark reddish brown (closest)
-];
+const NUM_LAYERS = 30;
+
+// Generate color palette using calculation for ultra-smooth 60fps atmospheric perspective
+// Creates an extremely subtle gradient from dark (closest) to light (furthest)
+const generateColorPalette = (numLayers: number): Color[] => {
+  const colors: Color[] = [];
+  
+  for (let i = 0; i < numLayers; i++) {
+    // Calculate normalized position (0 = closest, 1 = furthest)
+    const normalizedPosition = i / (numLayers - 1);
+    
+    // Use cubic curve for ultra-smooth 60fps transitions
+    // Much smaller brightness range for imperceptible changes
+    const brightness = 12 + (normalizedPosition * normalizedPosition * normalizedPosition * 28);
+    
+    // Extremely subtle blue tint that's barely detectable
+    const hue = 220 + (normalizedPosition * 2); // Minimal hue shift from 220 to 222
+    const saturation = normalizedPosition * 3; // Ultra-low saturation, max 3%
+    
+    colors.push({
+      h: Math.round(hue),
+      s: Math.round(saturation),
+      b: Math.round(brightness),
+      a: 360
+    });
+  }
+  
+  return colors;
+};
+
+const colorPalette: Color[] = generateColorPalette(NUM_LAYERS);
 
 const cMist: Color = { h: 0, s: 0, b: 100, a: 360 };
 
 // Motion + cylinder parameters
-const SCROLL_SENSITIVITY = 0.25; // maps input delta to our virtual scroll units
-const EASE = 0.12;
-const MOMENTUM_DECAY = 0.94; // 0..1, lower = faster stop
-const MIN_VELOCITY = 0.02; // threshold to stop momentum
+const SCROLL_SENSITIVITY = 0.6; // maps input delta to our virtual scroll units (increased for more immediate response)
+const EASE = 0.25; // increased for less initial resistance and more responsive movement
+const MOMENTUM_DECAY = 0.88; // 0..1, higher = slower stop (increased for sustained momentum)
+const MIN_VELOCITY = 0.005; // threshold to stop momentum (lowered for longer momentum persistence)
+const MAX_VELOCITY = 75; // maximum scrolling velocity to prevent excessive speed
+const AUTO_SCROLL_SPEED = -1.5; // default auto-scroll speed (negative = downward, 4x faster)
 const HEIGHT_MULTIPLIER = 1.5; // increase mountain canvas height
-const GLOBAL_VERTICAL_OFFSET = 700; // shift entire scene upward
+const GLOBAL_VERTICAL_OFFSET = 500; // shift entire scene upward
 
 // Cylinder layout controls
-const ROTATION_SPEED = 0.0002; // radians per virtual scroll unit
+const ROTATION_SPEED = 0.0005; // radians per virtual scroll unit
 // const DEPTH_SCALE_FACTOR = 0.5; // additional scale for front-most vs back-most (unused while layers are equal size)
 const DEPTH_Y_PARALLAX = 0; // vertical parallax by depth (keep 0 to keep horizon stable)
 
@@ -56,6 +66,7 @@ const OVAL_ELLIPTICAL_FACTOR = 3; // 0 = circular, 1 = very flat oval
 
 // Culling controls
 const CULLING_FRONTNESS_THRESHOLD = 0.1; // Hide layers with frontness below this value (0 = back, 1 = front)
+const MAX_VISIBLE_LAYERS = 50; // Maximum number of layers to render at once
 
 // Uniform shape amplitude for all layers (default ~closest-layer amplitude)
 const UNIFORM_MOUNTAIN_AMPLITUDE = 9;
@@ -64,11 +75,72 @@ const UNIFORM_MOUNTAIN_AMPLITUDE = 9;
 const CYLINDER_RADIUS_FRACTION = 10; // fraction of viewport height
 const CYLINDER_RADIUS_MAX = 10000; // hard cap to avoid excessive travel
 
-const NUM_LAYERS = 60;
 
+// Cached color calculations for performance
+const colorCache = new Map<string, string>();
+const colorCalculationCache = new Map<number, Color>();
+
+// Optimized color calculation functions
+const hsbToRgb = (h: number, s: number, b: number, a: number = 360): string => {
+  h = h / 360;
+  s = s / 100;
+  b = b / 100;
+  const alpha = a / 360;
+
+  let r = 0, g = 0, bl = 0;
+
+  if (s === 0) {
+    r = g = bl = b;
+  } else {
+    const hueToRgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+
+    const q = b < 0.5 ? b * (1 + s) : b + s - b * s;
+    const p = 2 * b - q;
+    r = hueToRgb(p, q, h + 1/3);
+    g = hueToRgb(p, q, h);
+    bl = hueToRgb(p, q, h - 1/3);
+  }
+
+  return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(bl * 255)}, ${alpha})`;
+};
+
+const getColorForDepth = (depth: number, palette: Color[]): Color => {
+  if (depth <= 0) return palette[0];
+  if (depth >= 1) return palette[palette.length - 1];
+  
+  const scaledDepth = depth * (palette.length - 1);
+  const index = Math.floor(scaledDepth);
+  const t = scaledDepth - index;
+  
+  if (index >= palette.length - 1) return palette[palette.length - 1];
+  
+  const c1 = palette[index];
+  const c2 = palette[index + 1];
+  
+  return {
+    h: c1.h + (c2.h - c1.h) * t,
+    s: c1.s + (c2.s - c1.s) * t,
+    b: c1.b + (c2.b - c1.b) * t,
+    a: c1.a + (c2.a - c1.a) * t
+  };
+};
 
 // Function to get background color based on the current frontmost mountain layer
 const getBackgroundColor = (currentScroll: number): string => {
+  // Use a coarser resolution for background color calculation to improve performance
+  const scrollKey = Math.floor(currentScroll * 10) / 10; // Round to 0.1 precision
+  
+  if (colorCache.has(scrollKey.toString())) {
+    return colorCache.get(scrollKey.toString())!;
+  }
+  
   // Calculate which layer is currently frontmost based on scroll position
   const baseRotation = ((currentScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
   
@@ -90,29 +162,26 @@ const getBackgroundColor = (currentScroll: number): string => {
   // Calculate the depth for this layer (same logic as in MountainLayer)
   const depth = Math.max(0.0001, frontmostLayerIndex / NUM_LAYERS);
   
-  // Get the color for this depth using the same interpolation logic as MountainLayer
-  const getColorForDepth = (depth: number, palette: Color[]): Color => {
-    if (depth <= 0) return palette[0];
-    if (depth >= 1) return palette[palette.length - 1];
+  // Check cache for color calculation
+  const depthKey = Math.floor(depth * 1000) / 1000; // Round to 0.001 precision
+  if (colorCalculationCache.has(depthKey)) {
+    const frontmostColor = colorCalculationCache.get(depthKey)!;
     
-    const scaledDepth = depth * (palette.length - 1);
-    const index = Math.floor(scaledDepth);
-    const t = scaledDepth - index;
-    
-    if (index >= palette.length - 1) return palette[palette.length - 1];
-    
-    const c1 = palette[index];
-    const c2 = palette[index + 1];
-    
-    return {
-      h: c1.h + (c2.h - c1.h) * t,
-      s: c1.s + (c2.s - c1.s) * t,
-      b: c1.b + (c2.b - c1.b) * t,
-      a: c1.a + (c2.a - c1.a) * t
+    // Make it lighter by increasing brightness and reducing saturation
+    const lighterColor = {
+      h: frontmostColor.h,
+      s: Math.max(0, frontmostColor.s * 0.3), // Reduce saturation to 30%
+      b: Math.min(100, frontmostColor.b + 40), // Increase brightness by 40
+      a: frontmostColor.a
     };
-  };
+    
+    const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
+    colorCache.set(scrollKey.toString(), result);
+    return result;
+  }
   
   const frontmostColor = getColorForDepth(depth, colorPalette);
+  colorCalculationCache.set(depthKey, frontmostColor);
   
   // Make it lighter by increasing brightness and reducing saturation
   const lighterColor = {
@@ -122,33 +191,9 @@ const getBackgroundColor = (currentScroll: number): string => {
     a: frontmostColor.a
   };
   
-  // Convert HSB to RGB
-  const h = lighterColor.h / 360;
-  const s = lighterColor.s / 100;
-  const b = lighterColor.b / 100;
-  
-  let r = 0, g = 0, bl = 0;
-  
-  if (s === 0) {
-    r = g = bl = b;
-  } else {
-    const hueToRgb = (p: number, q: number, t: number) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-      return p;
-    };
-    
-    const q = b < 0.5 ? b * (1 + s) : b + s - b * s;
-    const p = 2 * b - q;
-    r = hueToRgb(p, q, h + 1/3);
-    g = hueToRgb(p, q, h);
-    bl = hueToRgb(p, q, h - 1/3);
-  }
-  
-  return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(bl * 255)})`;
+  const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
+  colorCache.set(scrollKey.toString(), result);
+  return result;
 };
 
 export default function App() {
@@ -159,9 +204,17 @@ export default function App() {
   const touchStartYRef = useRef<number | null>(null);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   
+  // Auto-scroll state
+  const [autoScroll, setAutoScroll] = useState(true);
+  
   // Debug rotation state
   const [debugRotation, setDebugRotation] = useState(false);
   const [debugRotationAngle, setDebugRotationAngle] = useState(45); // degrees
+  
+  // Track layer regeneration state
+  const [layerRegenerationKeys, setLayerRegenerationKeys] = useState<Map<number, number>>(new Map());
+  const lastVisibleLayersRef = useRef<Set<number>>(new Set());
+  const isInitializedRef = useRef(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -171,11 +224,44 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Clean up caches periodically to prevent memory leaks
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      if (colorCache.size > 1000) {
+        colorCache.clear();
+      }
+      if (colorCalculationCache.size > 1000) {
+        colorCalculationCache.clear();
+      }
+    }, 30000); // Clean up every 30 seconds
+
+    return () => clearInterval(cleanupInterval);
+  }, []);
+
   useEffect(() => {
     let rafId: number;
-    const animate = () => {
+    let lastUpdateTime = 0;
+    const targetFPS = 60;
+    const frameInterval = 1000 / targetFPS;
+    
+    const animate = (currentTime: number) => {
+      // Throttle updates to target FPS
+      if (currentTime - lastUpdateTime < frameInterval) {
+        rafId = window.requestAnimationFrame(animate);
+        return;
+      }
+      lastUpdateTime = currentTime;
+      
+      // Apply auto-scroll if enabled
+      if (autoScroll) {
+        scrollTargetRef.current += AUTO_SCROLL_SPEED;
+      }
+
       // Apply momentum to the target position
       if (velocityRef.current !== 0) {
+        // Clamp velocity to maximum speed
+        velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
+        
         scrollTargetRef.current += velocityRef.current;
 
         // Decay velocity
@@ -185,9 +271,12 @@ export default function App() {
 
       const target = scrollTargetRef.current;
       const next = virtualScroll + (target - virtualScroll) * EASE;
+      
+      // Only update state if there's a meaningful change
       if (Math.abs(next - virtualScroll) > 0.001) {
         setVirtualScroll(next);
       }
+      
       rafId = window.requestAnimationFrame(animate);
     };
     rafId = window.requestAnimationFrame(animate);
@@ -217,7 +306,7 @@ export default function App() {
     }
 
     return layers;
-  }, [viewport.width, viewport.height]);
+  }, [viewport.height]); // Only depend on height, not width
 
   // Reserved for future: manual seed regeneration (kept intentionally unused)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -302,6 +391,8 @@ export default function App() {
           setDebugRotation(!debugRotation);
         } else if (e.key === 'r') {
           setDebugRotationAngle(prev => (prev + 15) % 360);
+        } else if (e.key === 'a') {
+          setAutoScroll(!autoScroll);
         }
       }}
     >
@@ -323,15 +414,73 @@ export default function App() {
           const verticalAmplitude = Math.min(CYLINDER_RADIUS_MAX, viewport.height * CYLINDER_RADIUS_FRACTION);
 
           const uniformReferenceY = Math.max(100, viewport.height - 200);
-          return mountainLayers
+          
+          // Pre-calculate all layer data for better performance
+          const layerData = mountainLayers
             .map((layer) => {
               const baseAngle = (layer.index / maxIndex) * Math.PI * 2;
               const angle = baseAngle + baseRotation;
               const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
               
-              // Cull layers at the bottom of the cylinder rotation
+              return {
+                layer,
+                frontness,
+                angle
+              };
+            })
+            .filter(({ frontness }) => frontness > CULLING_FRONTNESS_THRESHOLD) // Early culling
+            .sort((a, b) => b.frontness - a.frontness) // Sort by frontness (closest first)
+            .slice(0, MAX_VISIBLE_LAYERS); // Limit visible layers
+          
+          // Track visible layers and trigger regeneration for newly visible layers
+          const currentVisibleLayers = new Set(layerData.map(({ layer }) => layer.index));
+          const lastVisibleLayers = lastVisibleLayersRef.current;
+          
+          // Only check for regeneration after initial load
+          if (isInitializedRef.current) {
+            // Check for layers that became visible (were culled before, now visible)
+            const newlyVisibleLayers = new Set<number>();
+            currentVisibleLayers.forEach(layerIndex => {
+              if (!lastVisibleLayers.has(layerIndex)) {
+                newlyVisibleLayers.add(layerIndex);
+              }
+            });
+            
+            // Update regeneration keys for newly visible layers
+            if (newlyVisibleLayers.size > 0) {
+              setLayerRegenerationKeys(prev => {
+                const newKeys = new Map(prev);
+                newlyVisibleLayers.forEach(layerIndex => {
+                  const newKey = (newKeys.get(layerIndex) || 0) + 1;
+                  newKeys.set(layerIndex, newKey);
+                });
+                return newKeys;
+              });
+            }
+          } else {
+            // Mark as initialized after first render
+            isInitializedRef.current = true;
+          }
+          
+          // Update the last visible layers reference
+          lastVisibleLayersRef.current = currentVisibleLayers;
+          
+          // Continue with the mapping
+          const processedLayerData = layerData.map(({ layer, frontness, angle }) => {
+              // Calculate opacity based on frontness for smooth fade-out
+              let opacity = 1;
               if (frontness < CULLING_FRONTNESS_THRESHOLD) {
-                return null;
+                // Smooth fade-out as frontness approaches the threshold
+                const fadeRange = 0.15; // Fade over 0.15 units of frontness (increased for smoother transitions)
+                const fadeStart = CULLING_FRONTNESS_THRESHOLD;
+                const fadeEnd = Math.max(0, fadeStart - fadeRange);
+                
+                if (frontness <= fadeEnd) {
+                  opacity = 0; // Completely transparent
+                } else {
+                  // Smooth transition from 0 to 1 opacity
+                  opacity = (frontness - fadeEnd) / (fadeStart - fadeEnd);
+                }
               }
               
               // Create oval movement with slower, longer movement at top and bottom
@@ -361,12 +510,8 @@ export default function App() {
               const depthOffset = (maxIndex - layer.index) * 100;
               const zIndex = 1000 + Math.floor(frontness * 100000) + layer.index * 10 + depthOffset;
               
-              // Calculate progressive scaling based on z-index
-              // Higher z-index (closer layers) should be progressively bigger
-              const baseScale = 1.0;
-              const scaleIncrement = 0.015; // Each layer gets 1.5% bigger than the previous (subtle but visible)
-              const maxScale = 1.3; // Maximum scale to prevent excessive growth
-              const scaleFactor = Math.min(maxScale, baseScale + (layer.index - 1) * scaleIncrement);
+              // All layers use the same scale
+              const scaleFactor = 1.0;
 
               return {
                 layer,
@@ -374,50 +519,66 @@ export default function App() {
                 translateY,
                 horizontalOffset,
                 zIndex,
-                scaleFactor
+                scaleFactor,
+                opacity
               };
-            })
-            .filter((item): item is NonNullable<typeof item> => item !== null)
-            .map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor }) => (
-              <div
-                key={layer.index}
-                className="absolute top-0 left-0"
-                style={{
-                  width: `${viewport.width}px`,
-                  height: `${layerHeight}px`,
-                  zIndex,
-                  transform: `translate3d(${horizontalOffset}px, ${translateY}px, 0) scale(${scaleFactor})`,
-                  transformOrigin: 'center bottom',
-                  willChange: 'transform'
-                }}
-              >
-                <MountainLayer
-                  width={viewport.width}
-                  height={layerHeight}
-                  layerIndex={layer.index}
-                  referenceY={uniformReferenceY}
-                  colorPalette={colorPalette}
-                  mistColor={cMist}
-                  seed={seed}
-                  maxIndex={maxIndex}
-                  amplitude={UNIFORM_MOUNTAIN_AMPLITUDE}
-                  zIndex={zIndex}
-                />
-              </div>
-            ));
+            });
+          
+          return processedLayerData.map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor, opacity }) => {
+            const regenerationKey = layerRegenerationKeys.get(layer.index) || 0;
+            return (
+            <div
+              key={`${layer.index}-${regenerationKey}`}
+              className="absolute top-0 left-0"
+              style={{
+                width: `${viewport.width}px`,
+                height: `${layerHeight}px`,
+                zIndex,
+                transform: `translate3d(${horizontalOffset}px, ${translateY}px, 0) scale(${scaleFactor})`,
+                transformOrigin: 'center bottom',
+                willChange: 'transform, opacity',
+                opacity,
+                transition: 'opacity 0.3s ease-out'
+              }}
+            >
+              <MountainLayer
+                width={viewport.width}
+                height={layerHeight}
+                layerIndex={layer.index}
+                referenceY={uniformReferenceY}
+                colorPalette={colorPalette}
+                mistColor={cMist}
+                seed={seed + regenerationKey * 1000} // Add regeneration key to seed for new mountain
+                maxIndex={maxIndex}
+                amplitude={UNIFORM_MOUNTAIN_AMPLITUDE}
+                zIndex={zIndex}
+              />
+            </div>
+            );
+          });
         })()}
       </div>
       
       {/* Debug UI */}
-      {debugRotation && (
+      {(debugRotation || !autoScroll) && (
         <div className="absolute top-4 left-4 bg-black bg-opacity-75 text-white p-4 rounded-lg font-mono text-sm">
-          <div className="mb-2">
-            <strong>Debug Rotation Mode</strong>
+          {debugRotation && (
+            <div className="mb-2">
+              <strong>Debug Rotation Mode</strong>
+            </div>
+          )}
+          {debugRotation && <div>Angle: {debugRotationAngle}°</div>}
+          <div className={debugRotation ? "mt-2" : ""}>
+            Auto-scroll: {autoScroll ? "ON" : "OFF"}
           </div>
-          <div>Angle: {debugRotationAngle}°</div>
           <div className="text-xs text-gray-300 mt-2">
-            Press 'D' to toggle debug mode<br/>
-            Press 'R' to rotate (+15°)
+            Press 'A' to toggle auto-scroll<br/>
+            {debugRotation && (
+              <>
+                Press 'D' to toggle debug mode<br/>
+                Press 'R' to rotate (+15°)
+              </>
+            )}
           </div>
         </div>
       )}
@@ -436,6 +597,9 @@ export default function App() {
       
       {/* Animated grain overlay */}
       <div className="noise-overlay" />
+      
+      {/* God rays lighting effect */}
+      <GodRays />
     </div>
   );
 }
