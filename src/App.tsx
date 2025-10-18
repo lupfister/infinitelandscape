@@ -9,27 +9,39 @@ interface Color {
 }
 
 // Define color palette for gradual earth tone transition
-// Earth yellow (far) → Green (middle) → Earth yellow (close)
+// Rich earthy progression: deep browns → warm oranges → golden yellows → olive greens → forest tones
 const colorPalette: Color[] = [
-  { h: 35, s: 30, b: 25, a: 360 },   // Dark earth yellow (furthest)
-  { h: 40, s: 25, b: 30, a: 360 },   // Dark warm earth tone
-  { h: 60, s: 20, b: 35, a: 360 },   // Dark muted yellow-green
-  { h: 90, s: 25, b: 30, a: 360 },   // Dark muted olive green
-  { h: 120, s: 30, b: 25, a: 360 },  // Dark muted forest green
-  { h: 150, s: 25, b: 30, a: 360 },  // Dark muted teal-green
-  { h: 180, s: 20, b: 35, a: 360 },  // Dark muted blue-green
-  { h: 35, s: 35, b: 20, a: 360 }    // Very dark earth yellow (closest)
+  { h: 15, s: 45, b: 12, a: 360 },   // Deep reddish brown (furthest)
+  { h: 25, s: 40, b: 15, a: 360 },   // Rich sienna brown
+  { h: 30, s: 35, b: 18, a: 360 },   // Warm terracotta
+  { h: 35, s: 40, b: 15, a: 360 },   // Dark earth orange
+  { h: 40, s: 30, b: 27, a: 360 },   // Light muted orange
+  { h: 45, s: 35, b: 18, a: 360 },   // Burnt orange
+  { h: 50, s: 25, b: 30, a: 360 },   // Soft peachy orange
+  { h: 55, s: 30, b: 21, a: 360 },   // Golden brown
+  { h: 60, s: 20, b: 33, a: 360 },   // Light muted golden yellow
+  { h: 65, s: 25, b: 24, a: 360 },   // Warm golden yellow
+  { h: 70, s: 15, b: 36, a: 360 },   // Very light muted yellow
+  { h: 75, s: 20, b: 21, a: 360 },   // Muted yellow-green
+  { h: 80, s: 18, b: 30, a: 360 },   // Light olive yellow
+  { h: 85, s: 25, b: 18, a: 360 },   // Olive green
+  { h: 95, s: 30, b: 15, a: 360 },   // Deep olive
+  { h: 110, s: 35, b: 18, a: 360 },  // Forest green
+  { h: 130, s: 30, b: 15, a: 360 },  // Dark forest green
+  { h: 150, s: 25, b: 18, a: 360 },  // Muted teal-green
+  { h: 170, s: 20, b: 21, a: 360 },  // Blue-green
+  { h: 20, s: 50, b: 11, a: 360 }    // Very dark reddish brown (closest)
 ];
 
 const cMist: Color = { h: 0, s: 0, b: 100, a: 360 };
 
 // Motion + cylinder parameters
-const SCROLL_SENSITIVITY = 1; // maps input delta to our virtual scroll units
+const SCROLL_SENSITIVITY = 0.25; // maps input delta to our virtual scroll units
 const EASE = 0.12;
 const MOMENTUM_DECAY = 0.94; // 0..1, lower = faster stop
 const MIN_VELOCITY = 0.02; // threshold to stop momentum
 const HEIGHT_MULTIPLIER = 1.5; // increase mountain canvas height
-const GLOBAL_VERTICAL_OFFSET = 600; // shift entire scene upward
+const GLOBAL_VERTICAL_OFFSET = 700; // shift entire scene upward
 
 // Cylinder layout controls
 const ROTATION_SPEED = 0.0002; // radians per virtual scroll unit
@@ -51,6 +63,93 @@ const UNIFORM_MOUNTAIN_AMPLITUDE = 9;
 // Cylinder radius controls (vertical rotation amplitude)
 const CYLINDER_RADIUS_FRACTION = 10; // fraction of viewport height
 const CYLINDER_RADIUS_MAX = 10000; // hard cap to avoid excessive travel
+
+const NUM_LAYERS = 60;
+
+
+// Function to get background color based on the current frontmost mountain layer
+const getBackgroundColor = (currentScroll: number): string => {
+  // Calculate which layer is currently frontmost based on scroll position
+  const baseRotation = ((currentScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+  
+  // Find the layer with the highest frontness (closest to 1)
+  let maxFrontness = 0;
+  let frontmostLayerIndex = 1;
+  
+  for (let j = 1; j <= NUM_LAYERS; j++) {
+    const baseAngle = (j / NUM_LAYERS) * Math.PI * 2;
+    const angle = baseAngle + baseRotation;
+    const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
+    
+    if (frontness > maxFrontness) {
+      maxFrontness = frontness;
+      frontmostLayerIndex = j;
+    }
+  }
+  
+  // Calculate the depth for this layer (same logic as in MountainLayer)
+  const depth = Math.max(0.0001, frontmostLayerIndex / NUM_LAYERS);
+  
+  // Get the color for this depth using the same interpolation logic as MountainLayer
+  const getColorForDepth = (depth: number, palette: Color[]): Color => {
+    if (depth <= 0) return palette[0];
+    if (depth >= 1) return palette[palette.length - 1];
+    
+    const scaledDepth = depth * (palette.length - 1);
+    const index = Math.floor(scaledDepth);
+    const t = scaledDepth - index;
+    
+    if (index >= palette.length - 1) return palette[palette.length - 1];
+    
+    const c1 = palette[index];
+    const c2 = palette[index + 1];
+    
+    return {
+      h: c1.h + (c2.h - c1.h) * t,
+      s: c1.s + (c2.s - c1.s) * t,
+      b: c1.b + (c2.b - c1.b) * t,
+      a: c1.a + (c2.a - c1.a) * t
+    };
+  };
+  
+  const frontmostColor = getColorForDepth(depth, colorPalette);
+  
+  // Make it lighter by increasing brightness and reducing saturation
+  const lighterColor = {
+    h: frontmostColor.h,
+    s: Math.max(0, frontmostColor.s * 0.3), // Reduce saturation to 30%
+    b: Math.min(100, frontmostColor.b + 40), // Increase brightness by 40
+    a: frontmostColor.a
+  };
+  
+  // Convert HSB to RGB
+  const h = lighterColor.h / 360;
+  const s = lighterColor.s / 100;
+  const b = lighterColor.b / 100;
+  
+  let r = 0, g = 0, bl = 0;
+  
+  if (s === 0) {
+    r = g = bl = b;
+  } else {
+    const hueToRgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    
+    const q = b < 0.5 ? b * (1 + s) : b + s - b * s;
+    const p = 2 * b - q;
+    r = hueToRgb(p, q, h + 1/3);
+    g = hueToRgb(p, q, h);
+    bl = hueToRgb(p, q, h - 1/3);
+  }
+  
+  return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(bl * 255)})`;
+};
 
 export default function App() {
   const [seed, setSeed] = useState(Math.random() * 10000);
@@ -94,8 +193,6 @@ export default function App() {
     rafId = window.requestAnimationFrame(animate);
     return () => cancelAnimationFrame(rafId);
   }, [virtualScroll]);
-
-  const NUM_LAYERS = 60;
 
   // Memoize mountain layers calculation so it doesn't recreate on every render
   const mountainLayers = useMemo(() => {
@@ -178,7 +275,8 @@ export default function App() {
 
   return (
     <div 
-      className="h-screen w-screen overflow-hidden bg-gray-900"
+      className="h-screen w-screen overflow-hidden"
+      style={{ backgroundColor: getBackgroundColor(virtualScroll) }}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -262,17 +360,25 @@ export default function App() {
               // Add depth-based offset for better layer separation during transitions
               const depthOffset = (maxIndex - layer.index) * 100;
               const zIndex = 1000 + Math.floor(frontness * 100000) + layer.index * 10 + depthOffset;
+              
+              // Calculate progressive scaling based on z-index
+              // Higher z-index (closer layers) should be progressively bigger
+              const baseScale = 1.0;
+              const scaleIncrement = 0.015; // Each layer gets 1.5% bigger than the previous (subtle but visible)
+              const maxScale = 1.3; // Maximum scale to prevent excessive growth
+              const scaleFactor = Math.min(maxScale, baseScale + (layer.index - 1) * scaleIncrement);
 
               return {
                 layer,
                 frontness,
                 translateY,
                 horizontalOffset,
-                zIndex
+                zIndex,
+                scaleFactor
               };
             })
             .filter((item): item is NonNullable<typeof item> => item !== null)
-            .map(({ layer, frontness, translateY, horizontalOffset, zIndex }) => (
+            .map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor }) => (
               <div
                 key={layer.index}
                 className="absolute top-0 left-0"
@@ -280,7 +386,7 @@ export default function App() {
                   width: `${viewport.width}px`,
                   height: `${layerHeight}px`,
                   zIndex,
-                  transform: `translate3d(${horizontalOffset}px, ${translateY}px, 0)`,
+                  transform: `translate3d(${horizontalOffset}px, ${translateY}px, 0) scale(${scaleFactor})`,
                   transformOrigin: 'center bottom',
                   willChange: 'transform'
                 }}
@@ -295,6 +401,7 @@ export default function App() {
                   seed={seed}
                   maxIndex={maxIndex}
                   amplitude={UNIFORM_MOUNTAIN_AMPLITUDE}
+                  zIndex={zIndex}
                 />
               </div>
             ));
@@ -326,6 +433,9 @@ export default function App() {
           }}
         />
       )}
+      
+      {/* Animated grain overlay */}
+      <div className="noise-overlay" />
     </div>
   );
 }
