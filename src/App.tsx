@@ -526,6 +526,13 @@ export default function App() {
           
           return processedLayerData.map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor, opacity }) => {
             const regenerationKey = layerRegenerationKeys.get(layer.index) || 0;
+            
+            // Calculate progressive blur based on distance (frontness)
+            // Use a curve that ensures middle layers also get some blur
+            const maxBlur = 8; // Maximum blur for the most distant layers
+            const minBlur = 0.5; // Minimum blur for closest layers (ensures even closest layers have slight blur)
+            const blurAmount = minBlur + (1 - frontness) * (maxBlur - minBlur); // Gradual blur from minBlur to maxBlur
+            
             return (
             <div
               key={`${layer.index}-${regenerationKey}`}
@@ -538,7 +545,8 @@ export default function App() {
                 transformOrigin: 'center bottom',
                 willChange: 'transform, opacity',
                 opacity,
-                transition: 'opacity 0.3s ease-out'
+                transition: 'opacity 0.3s ease-out',
+                filter: `blur(${blurAmount}px)`
               }}
             >
               <MountainLayer

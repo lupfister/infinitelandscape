@@ -8,9 +8,9 @@ import { GodRays as GodRays1 } from '@paper-design/shaders-react';
  */
 export default function GodRays() {
   // Adjustable intensity settings - modify these values:
-  const INTENSITY = 0.4;        // Main intensity (0.1 = subtle, 0.5 = moderate, 0.8 = strong)
+  const INTENSITY = 0.8;        // Main intensity (0.1 = subtle, 0.5 = moderate, 0.8 = strong)
   const MID_INTENSITY = 0.5;    // Mid-range intensity (0.3 = subtle, 0.6 = moderate, 0.9 = strong)
-  const BLOOM = 0.6;            // Bloom intensity (0.3 = subtle, 0.6 = moderate, 1.0 = strong)
+  const BLOOM = 0.8;            // Bloom intensity (0.3 = subtle, 0.6 = moderate, 1.0 = strong)
   const DENSITY = 0.08;         // Ray density (0.05 = sparse, 0.1 = moderate, 0.15 = dense)
   
   return (

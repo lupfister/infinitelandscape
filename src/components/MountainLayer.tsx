@@ -46,7 +46,15 @@ function MountainLayerImpl({
   const lastColorRef = useRef<string | null>(null);
   const lastZIndexRef = useRef<number | null>(null);
   const [rockTexture, setRockTexture] = useState<HTMLImageElement | null>(null);
+  const [mistTexture, setMistTexture] = useState<HTMLImageElement | null>(null);
   const [textureNoise, setTextureNoise] = useState<{ rotation: number; scale: number } | null>(null);
+  const [mistVariation, setMistVariation] = useState<{ 
+    scale: number; 
+    rotation: number; 
+    offsetX: number; 
+    offsetY: number; 
+    flipHorizontal: boolean 
+  } | null>(null);
 
   // Load rock texture
   useEffect(() => {
@@ -55,12 +63,30 @@ function MountainLayerImpl({
     img.src = '/rock.png';
   }, []);
 
+  // Load mist texture
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setMistTexture(img);
+    img.src = '/mist.png';
+  }, []);
+
   // Generate random rotation and scale noise for this layer instance
   useEffect(() => {
     const rotation = (Math.random() - 0.5) * 60; // -30 to +30 degrees
     const scale = (0.8 + Math.random() * 0.4) * 2; // 1.6 to 2.4 scale (2x overall)
     setTextureNoise({ rotation, scale });
   }, [layerIndex, seed]);
+
+  // Generate random mist variation parameters for this layer instance
+  useEffect(() => {
+    const scale = (0.8 + Math.random() * 0.4) * 1.5; // 1.2 to 1.8 scale (1.5x multiplier)
+    const rotation = (Math.random() - 0.5) * 20; // -10 to +10 degrees
+    const offsetX = (Math.random() - 0.5) * 100; // ±50px max
+    const offsetY = (Math.random() - 0.5) * 100; // ±50px max
+    const flipHorizontal = Math.random() > 0.5; // 50% chance to flip
+    
+    setMistVariation({ scale, rotation, offsetX, offsetY, flipHorizontal });
+  }, [layerIndex, seed, width, height]);
 
   // Generate mountain shape once and store it
   useEffect(() => {
@@ -240,7 +266,7 @@ function MountainLayerImpl({
     // Apply rock texture with color dodge blend mode
     if (rockTexture && textureNoise) {
       ctx.globalCompositeOperation = 'color-dodge';
-      ctx.globalAlpha = 0.1; // Reduce opacity by half
+      ctx.globalAlpha = 0.2; // Reduce opacity by half
       ctx.save();
       ctx.clip(shapePathRef.current!);
       
@@ -261,29 +287,65 @@ function MountainLayerImpl({
     // Reset blend mode for subsequent operations
     ctx.globalCompositeOperation = 'source-over';
 
-    // Add mist effect that varies by layer depth
-    const mistHeight = height - referenceY;
-    const mistStartY = referenceY - (mistHeight * 0.2); // Start mist higher up
-    const gradient = ctx.createLinearGradient(0, mistStartY, 0, height);
-    
-    // Make mist more prominent for closer layers (higher layerIndex)
-    const mistIntensity = Math.min(1, (layerIndex / maxIndex) * 1.5); // Closer layers get more mist
-    const baseOpacity = 40 + (mistIntensity * 60); // 40-100 range
-    
-    // Create simple 2-stop gradient
-    const startOpacity = 0;
-    const endOpacity = baseOpacity / 240;
-    gradient.addColorStop(0, `rgba(255, 255, 255, ${startOpacity})`);
-    gradient.addColorStop(1, `rgba(255, 255, 255, ${endOpacity})`);
-    
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, mistStartY, width, height - mistStartY);
+    // Add mist effect using mist.png image with variation
+    if (mistTexture && mistVariation) {
+      const mistHeight = height - referenceY;
+      const mistStartY = referenceY - (mistHeight * 0.2); // Start mist higher up
+      
+      // Make mist more prominent for closer layers (higher layerIndex)
+      const mistIntensity = Math.min(1, (layerIndex / maxIndex) * 1.5); // Closer layers get more mist
+      const baseOpacity = 40 + (mistIntensity * 60); // 40-100 range
+      
+      ctx.save();
+      ctx.globalAlpha = baseOpacity / 240; // Convert to 0-1 range
+      ctx.globalCompositeOperation = 'screen'; // Use screen blend mode for mist effect
+      
+      // Apply transformations for mist variation
+      const centerX = width / 2 + mistVariation.offsetX;
+      const centerY = height / 2 + mistVariation.offsetY;
+      
+      ctx.translate(centerX, centerY);
+      ctx.rotate((mistVariation.rotation * Math.PI) / 180); // Convert degrees to radians
+      ctx.scale(mistVariation.scale, mistVariation.scale);
+      
+      // Apply horizontal flip if needed
+      if (mistVariation.flipHorizontal) {
+        ctx.scale(-1, 1);
+      }
+      
+      ctx.translate(-centerX, -centerY);
+      
+      // Draw mist texture covering the mist area
+      ctx.drawImage(
+        mistTexture, 
+        0, mistStartY, 
+        width, height - mistStartY
+      );
+      
+      ctx.restore();
+      
+      // Add white gradient overlay for additional mist effect
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      
+      // Create white to white gradient with opacity variation
+      const gradient = ctx.createLinearGradient(0, mistStartY, 0, height);
+      const startOpacity = 0;
+      const endOpacity = baseOpacity / 480; // Half the intensity of the image
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${startOpacity})`);
+      gradient.addColorStop(1, `rgba(255, 255, 255, ${endOpacity})`);
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, mistStartY, width, height - mistStartY);
+      
+      ctx.restore();
+    }
 
     // Update cache
     lastColorRef.current = `${solidColorRgb}-${randomColor}`;
     lastZIndexRef.current = zIndex || 0;
 
-  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex, rockTexture, textureNoise]);
+  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex, rockTexture, mistTexture, textureNoise, mistVariation]);
 
   return (
     <canvas
