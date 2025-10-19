@@ -177,6 +177,9 @@ export default function App() {
   const [isHighRefreshRate, setIsHighRefreshRate] = useState(false);
   // Auto-scroll state
   const [autoScroll, setAutoScroll] = useState(true);
+  
+  // Error state for debugging
+  const [error, setError] = useState<string | null>(null);
 
   // Debug logging for deployment
   useEffect(() => {
