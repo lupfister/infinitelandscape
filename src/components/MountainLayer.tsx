@@ -8,12 +8,6 @@ interface Color {
   a: number;
 }
 
-// Group colors by hue families for clustering
-const COLOR_FAMILIES = {
-  blues: ['#293434', '#31475B', '#5C758E'],           // Blue-gray family
-  browns: ['#5A3B24', '#8D5829', '#7F6734', '#9B7D4D'], // Brown family
-  greens: ['#414C39', '#5C5D3A', '#7B7442']           // Green family
-};
 
 export interface MountainLayerProps {
   width: number;
@@ -45,9 +39,7 @@ function MountainLayerImpl({
   const shapeGeneratedRef = useRef(false);
   const lastColorRef = useRef<string | null>(null);
   const lastZIndexRef = useRef<number | null>(null);
-  const [rockTexture, setRockTexture] = useState<HTMLImageElement | null>(null);
   const [mistTexture, setMistTexture] = useState<HTMLImageElement | null>(null);
-  const [textureNoise, setTextureNoise] = useState<{ rotation: number; scale: number } | null>(null);
   const [mistVariation, setMistVariation] = useState<{ 
     scale: number; 
     rotation: number; 
@@ -56,12 +48,6 @@ function MountainLayerImpl({
     flipHorizontal: boolean 
   } | null>(null);
 
-  // Load rock texture
-  useEffect(() => {
-    const img = new Image();
-    img.onload = () => setRockTexture(img);
-    img.src = '/rock.png';
-  }, []);
 
   // Load mist texture
   useEffect(() => {
@@ -70,12 +56,6 @@ function MountainLayerImpl({
     img.src = '/mist.png';
   }, []);
 
-  // Generate random rotation and scale noise for this layer instance
-  useEffect(() => {
-    const rotation = (Math.random() - 0.5) * 60; // -30 to +30 degrees
-    const scale = (0.8 + Math.random() * 0.4) * 2; // 1.6 to 2.4 scale (2x overall)
-    setTextureNoise({ rotation, scale });
-  }, [layerIndex, seed]);
 
   // Generate random mist variation parameters for this layer instance
   useEffect(() => {
@@ -193,33 +173,6 @@ function MountainLayerImpl({
     return `rgba(${r}, ${g}, ${b}, 1)`;
   };
 
-  // Generate a random color for this layer based on layerIndex and seed
-  // with clustering to make similar hues appear near each other
-  const getRandomColorForLayer = (layerIndex: number, seed: number): string => {
-    // Create a base seed for this layer
-    const baseSeed = (layerIndex * 7 + seed) % 1000;
-    
-    // Determine which color family to use based on layer index and seed
-    // This creates "zones" of similar colors
-    const familySeed = Math.floor((layerIndex + seed * 0.1) / 4) % 3; // Changes every 4 layers
-    const familyNames = Object.keys(COLOR_FAMILIES);
-    const selectedFamily = familyNames[familySeed] as keyof typeof COLOR_FAMILIES;
-    const familyColors = COLOR_FAMILIES[selectedFamily];
-    
-    // Add some randomness within the family, but with bias towards similar colors
-    const colorIndex = Math.floor((baseSeed + layerIndex * 0.3) % familyColors.length);
-    
-    // Occasionally (20% chance) pick from a different family for variety
-    if (baseSeed % 100 < 20) {
-      const otherFamilies = familyNames.filter(name => name !== selectedFamily);
-      const randomFamily = otherFamilies[Math.floor(baseSeed / 100) % otherFamilies.length] as keyof typeof COLOR_FAMILIES;
-      const randomFamilyColors = COLOR_FAMILIES[randomFamily];
-      const randomColorIndex = Math.floor(baseSeed / 10) % randomFamilyColors.length;
-      return randomFamilyColors[randomColorIndex];
-    }
-    
-    return familyColors[colorIndex];
-  };
 
 
 
@@ -234,40 +187,25 @@ function MountainLayerImpl({
     // Check if we need to redraw (only if color, z-index, or seed changed)
     const currentColor = lastColorRef.current;
     const currentZIndex = lastZIndexRef.current;
-    const randomColor = getRandomColorForLayer(layerIndex, seed);
     
     // More aggressive caching for 120fps - only redraw when absolutely necessary
-    if (currentColor && currentZIndex === zIndex && currentColor.includes(randomColor)) {
+    if (currentColor && currentZIndex === zIndex) {
       return; // No need to redraw
     }
 
     // Clear canvas with transparency
     ctx.clearRect(0, 0, width, height);
 
-    // Get gray color based on z-index (distance from camera)
-    const getGrayColorForZIndex = (zIndex: number | undefined, palette: Color[]): Color => {
-      if (zIndex === undefined) {
-        // Fallback to middle gray if no z-index
-        return palette[Math.floor(palette.length / 2)];
-      }
-      
-      // Normalize z-index to 0-1 range for color selection
-      // Higher z-index values (closer) should get darker grays
-      // Lower z-index values (distant) should get lighter grays
-      const minZIndex = 1000;
-      const maxZIndex = 200000;
-      const normalizedZIndex = Math.max(0, Math.min(1, (zIndex - minZIndex) / (maxZIndex - minZIndex)));
-      
-      // Map normalized z-index to palette index
-      // Higher z-index (closer) maps to darker colors (lower palette index)
-      // Lower z-index (distant) maps to lighter colors (higher palette index)
-      const paletteIndex = Math.floor((1 - normalizedZIndex) * (palette.length - 1));
+    // Get color based on layer index (each layer gets its own color from the palette)
+    const getColorForLayer = (layerIndex: number, palette: Color[]): Color => {
+      // Use layer index to select color from palette
+      const paletteIndex = Math.min(layerIndex - 1, palette.length - 1); // layerIndex starts at 1
       const clampedIndex = Math.max(0, Math.min(palette.length - 1, paletteIndex));
       
       return palette[clampedIndex];
     };
     
-    const solidColor = getGrayColorForZIndex(zIndex, colorPalette);
+    const solidColor = getColorForLayer(layerIndex, colorPalette);
     const solidColorRgb = hsbToRgb(solidColor.h, solidColor.s, solidColor.b, solidColor.a);
 
     // Draw mountain shape with gradient from current color at top to white at bottom
@@ -278,44 +216,7 @@ function MountainLayerImpl({
     
     ctx.fillStyle = gradient;
     ctx.fill(shapePathRef.current!);
-
-    // Apply flat random color overlay with blend mode
-    ctx.globalCompositeOperation = 'overlay';
-    ctx.fillStyle = randomColor;
-    ctx.fill(shapePathRef.current!);
     
-    // Apply separate gradient overlay that fades to white
-    ctx.globalCompositeOperation = 'multiply';
-    const gradientOverlay = ctx.createLinearGradient(0, 0, 0, height);
-    gradientOverlay.addColorStop(0, 'rgba(255, 255, 255, 1)'); // White at top (no effect)
-    gradientOverlay.addColorStop(0.8, 'rgba(255, 255, 255, 1)'); // Keep white until 80% down
-    gradientOverlay.addColorStop(0.9, 'rgba(255, 255, 255, 0.8)'); // Start fading
-    gradientOverlay.addColorStop(0.95, 'rgba(255, 255, 255, 0.5)'); // More fade
-    gradientOverlay.addColorStop(0.98, 'rgba(255, 255, 255, 0.2)'); // Almost transparent
-    gradientOverlay.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fully transparent at bottom
-    ctx.fillStyle = gradientOverlay;
-    ctx.fill(shapePathRef.current!);
-    
-    // Apply rock texture with color dodge blend mode
-    if (rockTexture && textureNoise) {
-      ctx.globalCompositeOperation = 'color-dodge';
-      ctx.globalAlpha = 0.1; // Reduce opacity by half
-      ctx.save();
-      ctx.clip(shapePathRef.current!);
-      
-      // Apply transformations for rotation and scale
-      const centerX = width / 2;
-      const centerY = height / 2;
-      
-      ctx.translate(centerX, centerY);
-      ctx.rotate((textureNoise.rotation * Math.PI) / 180); // Convert degrees to radians
-      ctx.scale(textureNoise.scale, textureNoise.scale);
-      ctx.translate(-centerX, -centerY);
-      
-      ctx.drawImage(rockTexture, 0, 0, width, height);
-      ctx.restore();
-      ctx.globalAlpha = 1; // Reset alpha
-    }
     
     // Reset blend mode for subsequent operations
     ctx.globalCompositeOperation = 'source-over';
@@ -359,10 +260,10 @@ function MountainLayerImpl({
     }
 
     // Update cache
-    lastColorRef.current = `${solidColorRgb}-${randomColor}`;
+    lastColorRef.current = solidColorRgb;
     lastZIndexRef.current = zIndex || 0;
 
-  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex, rockTexture, mistTexture, textureNoise, mistVariation]);
+  }, [width, height, layerIndex, referenceY, colorPalette, mistColor, seed, maxIndex, zIndex, mistTexture, mistVariation]);
 
   return (
     <canvas

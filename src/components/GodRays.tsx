@@ -1,4 +1,5 @@
 import { GodRays as GodRays1 } from '@paper-design/shaders-react';
+import { useState, useEffect } from 'react';
 
 /**
  * GodRays component using Paper shaders
@@ -7,11 +8,30 @@ import { GodRays as GodRays1 } from '@paper-design/shaders-react';
  * on Oct 17, 2025 at 11:23 PM.
  */
 export default function GodRays() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile devices
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobileDevice = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      setIsMobile(isMobileDevice);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   // Adjustable intensity settings - modify these values:
   const INTENSITY = 0.4;        // Main intensity (0.1 = subtle, 0.5 = moderate, 0.8 = strong)
   const MID_INTENSITY = 0.4;    // Mid-range intensity (0.3 = subtle, 0.6 = moderate, 0.9 = strong)
   const BLOOM = 0.7;            // Bloom intensity (0.3 = subtle, 0.6 = moderate, 1.0 = strong)
   const DENSITY = 0.06;         // Ray density (0.05 = sparse, 0.1 = moderate, 0.15 = dense)
+  
+  // Mobile-specific adjustments
+  const offsetY = isMobile ? -1.2 : -0.8;  // More negative y offset on mobile
+  const speed = 0.8;  // Much slower animation (reduced from 2)
   
   return (
     <GodRays1 
@@ -19,14 +39,14 @@ export default function GodRays() {
       colors={['#00696E', '#FFE200', '#FF0005']} 
       colorBloom="#FFE19C" 
       offsetX={0} 
-      offsetY={-0.8} 
+      offsetY={offsetY} 
       intensity={INTENSITY} 
       spotty={0.59} 
       midSize={1} 
       midIntensity={MID_INTENSITY} 
       density={DENSITY} 
       bloom={BLOOM} 
-      speed={2} 
+      speed={speed} 
       scale={1} 
       frame={16742.770000000215} 
       style={{ 

@@ -5,6 +5,7 @@ interface UseAudioOptions {
   basePitch?: number;
   maxPitch?: number;
   autoPlay?: boolean;
+  isMobile?: boolean;
 }
 
 interface UseAudioReturn {
@@ -22,20 +23,25 @@ export const useAudio = ({
   src,
   basePitch = 0.7,
   maxPitch = 1.0,
-  autoPlay = false
+  autoPlay = false,
+  isMobile = false
 }: UseAudioOptions): UseAudioReturn => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
-  const pitchNodeRef = useRef<AudioBufferSourceNode | null>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolumeState] = useState(0.3);
   const [pitch, setPitchState] = useState(basePitch);
 
-  // Initialize audio context
+  // Initialize audio context (skip on mobile)
   useEffect(() => {
+    if (isMobile) {
+      console.log('Audio disabled on mobile device');
+      return;
+    }
+
     const initAudioContext = async () => {
       try {
         // Create audio context
@@ -69,7 +75,7 @@ export const useAudio = ({
         audioContextRef.current.close();
       }
     };
-  }, [src, autoPlay]);
+  }, [src, autoPlay, isMobile]);
 
   // Update volume
   useEffect(() => {
@@ -78,13 +84,28 @@ export const useAudio = ({
     }
   }, [volume]);
 
-  const play = useCallback(() => {
-    if (!audioContextRef.current || !audioBufferRef.current || isPlaying) return;
+  const play = useCallback(async () => {
+    if (isMobile) {
+      console.log('Audio play blocked on mobile device');
+      return;
+    }
+
+    if (!audioContextRef.current || !audioBufferRef.current || isPlaying) {
+      console.log('Audio play blocked:', {
+        hasContext: !!audioContextRef.current,
+        hasBuffer: !!audioBufferRef.current,
+        isPlaying
+      });
+      return;
+    }
 
     try {
+      console.log('Attempting to play audio...');
+      
       // Resume audio context if suspended (required for user interaction)
       if (audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume();
+        console.log('Resuming suspended audio context...');
+        await audioContextRef.current.resume();
       }
 
       // Create new source node
@@ -97,6 +118,7 @@ export const useAudio = ({
       
       // Handle end of playback
       sourceNodeRef.current.onended = () => {
+        console.log('Audio playback ended');
         setIsPlaying(false);
         sourceNodeRef.current = null;
       };
@@ -104,18 +126,24 @@ export const useAudio = ({
       // Start playback
       sourceNodeRef.current.start();
       setIsPlaying(true);
+      console.log('Audio playback started successfully');
     } catch (error) {
       console.error('Failed to play audio:', error);
     }
   }, [isPlaying, pitch]);
 
   const pause = useCallback(() => {
+    if (isMobile) {
+      console.log('Audio pause blocked on mobile device');
+      return;
+    }
+
     if (sourceNodeRef.current && isPlaying) {
       sourceNodeRef.current.stop();
       sourceNodeRef.current = null;
       setIsPlaying(false);
     }
-  }, [isPlaying]);
+  }, [isPlaying, isMobile]);
 
   const setVolume = useCallback((newVolume: number) => {
     setVolumeState(Math.max(0, Math.min(1, newVolume)));
@@ -132,6 +160,10 @@ export const useAudio = ({
   }, [isPlaying]);
 
   const setPitchFromVelocity = useCallback((velocity: number) => {
+    if (isMobile) {
+      return; // Skip pitch adjustment on mobile
+    }
+
     // Map velocity to pitch range
     // Base pitch is 0.5, max pitch is 1.0
     // Use absolute velocity for pitch calculation
@@ -140,7 +172,7 @@ export const useAudio = ({
     const newPitch = basePitch + (normalizedVelocity * (maxPitch - basePitch));
     
     setPitch(newPitch);
-  }, [basePitch, maxPitch, setPitch]);
+  }, [basePitch, maxPitch, setPitch, isMobile]);
 
   return {
     isPlaying,

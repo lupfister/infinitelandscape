@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import MountainLayer from './components/MountainLayer';
 import GodRays from './components/GodRays';
 import { useAudio } from './hooks/useAudio';
+import rockTexture from '/rock.png';
 
 interface Color {
   h: number;
@@ -12,47 +13,127 @@ interface Color {
 
 const NUM_LAYERS = 30;
 
-// Generate color palette using calculation for ultra-smooth 60fps atmospheric perspective
-// Creates an extremely subtle gradient from dark (closest) to light (furthest)
-const generateColorPalette = (numLayers: number): Color[] => {
+// Mobile detection
+const isMobile = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+         window.innerWidth <= 768;
+};
+
+// Generate color palette using the original COLOR_FAMILIES palette
+const generateColorPalette = (numLayers: number, seed: number): Color[] => {
   const colors: Color[] = [];
   
-  for (let i = 0; i < numLayers; i++) {
-    // Calculate normalized position (0 = closest, 1 = furthest)
-    const normalizedPosition = i / (numLayers - 1);
+  // Original color families from MountainLayer
+  const COLOR_FAMILIES = {
+    blues: ['#293434', '#31475B', '#5C758E'],           // Blue-gray family
+    browns: ['#5A3B24', '#8D5829', '#7F6734', '#9B7D4D'], // Brown family
+    greens: ['#414C39', '#5C5D3A', '#7B7442']           // Green family
+  };
+  
+  // Convert hex colors to HSB for consistency
+  const hexToHsb = (hex: string): Color => {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
     
-    // Use cubic curve for ultra-smooth 60fps transitions
-    // Much smaller brightness range for imperceptible changes
-    const brightness = 12 + (normalizedPosition * normalizedPosition * normalizedPosition * 28);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const diff = max - min;
     
-    // Extremely subtle blue tint that's barely detectable
-    const hue = 220 + (normalizedPosition * 2); // Minimal hue shift from 220 to 222
-    const saturation = normalizedPosition * 3; // Ultra-low saturation, max 3%
+    let h = 0;
+    let s = max === 0 ? 0 : diff / max;
+    let brightness = max;
     
-    colors.push({
-      h: Math.round(hue),
-      s: Math.round(saturation),
-      b: Math.round(brightness),
+    if (diff !== 0) {
+      if (max === r) h = ((g - b) / diff) % 6;
+      else if (max === g) h = (b - r) / diff + 2;
+      else h = (r - g) / diff + 4;
+    }
+    
+    h = Math.round(h * 60);
+    if (h < 0) h += 360;
+    
+    return {
+      h: Math.round(h),
+      s: Math.min(100, Math.round(s * 100 * 2.2)), // Increase saturation by 120%
+      b: Math.round(brightness * 35), // Reduce brightness to 35% for much darker colors
       a: 360
-    });
+    };
+  };
+  
+  // Convert all colors to HSB format with varying saturation and lightness levels for contrast
+  const colorFamilies = {
+    blues: COLOR_FAMILIES.blues.map(color => {
+      const hsb = hexToHsb(color);
+      return { 
+        ...hsb, 
+        s: Math.min(100, hsb.s * 1.8), // High saturation for blues
+        b: Math.min(100, hsb.b * 0.8)  // Lighter blues (80% brightness)
+      };
+    }),
+    browns: COLOR_FAMILIES.browns.map(color => {
+      const hsb = hexToHsb(color);
+      return { 
+        ...hsb, 
+        s: Math.min(100, hsb.s * 3.0), // Very high saturation for browns
+        b: Math.min(100, hsb.b * 0.25) // Very dark browns (25% brightness)
+      };
+    }),
+    greens: COLOR_FAMILIES.greens.map(color => {
+      const hsb = hexToHsb(color);
+      return { 
+        ...hsb, 
+        s: Math.min(100, hsb.s * 1.2), // Lower saturation for greens
+        b: Math.min(100, hsb.b * 0.5)  // Medium darkness greens (50% brightness)
+      };
+    })
+  };
+  
+  const familyNames = Object.keys(colorFamilies);
+  
+  for (let i = 0; i < numLayers; i++) {
+    // Create a base seed for this layer
+    const baseSeed = (i * 7 + seed) % 1000;
+    
+    // Determine which color family to use based on layer index and seed
+    // This creates "zones" of similar colors
+    const familySeed = Math.floor((i + seed * 0.1) / 4) % familyNames.length; // Changes every 4 layers
+    const selectedFamily = familyNames[familySeed] as keyof typeof colorFamilies;
+    const familyColors = colorFamilies[selectedFamily];
+    
+    // Add some randomness within the family, but with bias towards similar colors
+    const colorIndex = Math.floor((baseSeed + i * 0.3) % familyColors.length);
+    
+    // Occasionally (20% chance) pick from a different family for variety
+    let finalColor = familyColors[colorIndex];
+    if (baseSeed % 100 < 20) {
+      const otherFamilies = familyNames.filter(name => name !== selectedFamily);
+      const randomFamily = otherFamilies[Math.floor(baseSeed / 100) % otherFamilies.length] as keyof typeof colorFamilies;
+      const randomFamilyColors = colorFamilies[randomFamily];
+      const randomColorIndex = Math.floor(baseSeed / 10) % randomFamilyColors.length;
+      finalColor = randomFamilyColors[randomColorIndex];
+    }
+    
+    colors.push(finalColor);
   }
   
   return colors;
 };
 
-const colorPalette: Color[] = generateColorPalette(NUM_LAYERS);
+// Color palette will be generated dynamically based on mobile status
 
 const cMist: Color = { h: 0, s: 0, b: 100, a: 360 };
 
 // Motion + cylinder parameters
 const SCROLL_SENSITIVITY = 0.6; // maps input delta to our virtual scroll units (increased for more immediate response)
 const EASE = 0.25; // increased for less initial resistance and more responsive movement
-const MOMENTUM_DECAY = 0.88; // 0..1, higher = slower stop (increased for sustained momentum)
-const MIN_VELOCITY = 0.005; // threshold to stop momentum (lowered for longer momentum persistence)
-const MAX_VELOCITY = 75; // maximum scrolling velocity to prevent excessive speed
+const MOMENTUM_DECAY = 0.90; // 0..1, higher = slower stop (increased for sustained momentum)
+const MIN_VELOCITY = 0.015; // threshold to stop momentum (lowered for longer momentum persistence)
+const MAX_VELOCITY = 95; // maximum scrolling velocity to prevent excessive speed
 const AUTO_SCROLL_SPEED = -1.5; // default auto-scroll speed (negative = downward, 4x faster)
 const HEIGHT_MULTIPLIER = 1.5; // increase mountain canvas height
-const GLOBAL_VERTICAL_OFFSET = 500; // shift entire scene upward
+const GLOBAL_VERTICAL_OFFSET_DESKTOP = 500; // shift entire scene upward for desktop
+const GLOBAL_VERTICAL_OFFSET_MOBILE = 500; // shift entire scene upward for mobile
 
 // Cylinder layout controls
 const ROTATION_SPEED = 0.0005; // radians per virtual scroll unit
@@ -67,7 +148,7 @@ const OVAL_ELLIPTICAL_FACTOR = 3; // 0 = circular, 1 = very flat oval
 
 // Culling controls
 const CULLING_FRONTNESS_THRESHOLD = 0.1; // Hide layers with frontness below this value (0 = back, 1 = front)
-const MAX_VISIBLE_LAYERS = 50; // Maximum number of layers to render at once
+const getMaxVisibleLayers = (isMobile: boolean) => isMobile ? 8 : 24; // More aggressive culling on mobile
 
 // Uniform shape amplitude for all layers (default ~closest-layer amplitude)
 const UNIFORM_MOUNTAIN_AMPLITUDE = 9;
@@ -77,137 +158,10 @@ const CYLINDER_RADIUS_FRACTION = 10; // fraction of viewport height
 const CYLINDER_RADIUS_MAX = 10000; // hard cap to avoid excessive travel
 
 
-// Cached color calculations for performance - optimized for 120fps
-const colorCache = new Map<string, string>();
-const colorCalculationCache = new Map<number, Color>();
+// Cached layer data for performance - optimized for 120fps
 const layerDataCache = new Map<string, any>();
 const lastCacheTime = new Map<string, number>();
 // Removed unused CACHE_DURATION constant
-
-// Optimized color calculation functions
-const hsbToRgb = (h: number, s: number, b: number, a: number = 360): string => {
-  h = h / 360;
-  s = s / 100;
-  b = b / 100;
-  const alpha = a / 360;
-
-  let r = 0, g = 0, bl = 0;
-
-  if (s === 0) {
-    r = g = bl = b;
-  } else {
-    const hueToRgb = (p: number, q: number, t: number) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-      return p;
-    };
-
-    const q = b < 0.5 ? b * (1 + s) : b + s - b * s;
-    const p = 2 * b - q;
-    r = hueToRgb(p, q, h + 1/3);
-    g = hueToRgb(p, q, h);
-    bl = hueToRgb(p, q, h - 1/3);
-  }
-
-  return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(bl * 255)}, ${alpha})`;
-};
-
-const getColorForDepth = (depth: number, palette: Color[]): Color => {
-  if (depth <= 0) return palette[0];
-  if (depth >= 1) return palette[palette.length - 1];
-  
-  const scaledDepth = depth * (palette.length - 1);
-  const index = Math.floor(scaledDepth);
-  const t = scaledDepth - index;
-  
-  if (index >= palette.length - 1) return palette[palette.length - 1];
-  
-  const c1 = palette[index];
-  const c2 = palette[index + 1];
-  
-  return {
-    h: c1.h + (c2.h - c1.h) * t,
-    s: c1.s + (c2.s - c1.s) * t,
-    b: c1.b + (c2.b - c1.b) * t,
-    a: c1.a + (c2.a - c1.a) * t
-  };
-};
-
-// Function to get background color based on the current frontmost mountain layer
-const getBackgroundColor = (currentScroll: number, isHighRefresh: boolean = false): string => {
-  // Use adaptive precision based on refresh rate for better performance
-  const precision = isHighRefresh ? 5 : 10; // Higher precision for 120fps
-  const scrollKey = Math.floor(currentScroll * precision) / precision;
-  const cacheKey = scrollKey.toString();
-  
-  // Check cache with time-based expiration
-  const now = performance.now();
-  const lastTime = lastCacheTime.get(cacheKey) || 0;
-  const cacheDuration = isHighRefresh ? 8 : 16; // 8ms for 120fps, 16ms for 60fps
-  
-  if (colorCache.has(cacheKey) && (now - lastTime) < cacheDuration) {
-    return colorCache.get(cacheKey)!;
-  }
-  
-  // Calculate which layer is currently frontmost based on scroll position
-  const baseRotation = ((currentScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-  
-  // Find the layer with the highest frontness (closest to 1)
-  let maxFrontness = 0;
-  let frontmostLayerIndex = 1;
-  
-  for (let j = 1; j <= NUM_LAYERS; j++) {
-    const baseAngle = (j / NUM_LAYERS) * Math.PI * 2;
-    const angle = baseAngle + baseRotation;
-    const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
-    
-    if (frontness > maxFrontness) {
-      maxFrontness = frontness;
-      frontmostLayerIndex = j;
-    }
-  }
-  
-  // Calculate the depth for this layer (same logic as in MountainLayer)
-  const depth = Math.max(0.0001, frontmostLayerIndex / NUM_LAYERS);
-  
-  // Check cache for color calculation
-  const depthKey = Math.floor(depth * 1000) / 1000; // Round to 0.001 precision
-  if (colorCalculationCache.has(depthKey)) {
-    const frontmostColor = colorCalculationCache.get(depthKey)!;
-    
-    // Make it lighter by increasing brightness and reducing saturation
-    const lighterColor = {
-      h: frontmostColor.h,
-      s: Math.max(0, frontmostColor.s * 0.3), // Reduce saturation to 30%
-      b: Math.min(100, frontmostColor.b + 40), // Increase brightness by 40
-      a: frontmostColor.a
-    };
-    
-    const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
-    colorCache.set(cacheKey, result);
-    lastCacheTime.set(cacheKey, now);
-    return result;
-  }
-  
-  const frontmostColor = getColorForDepth(depth, colorPalette);
-  colorCalculationCache.set(depthKey, frontmostColor);
-  
-  // Make it lighter by increasing brightness and reducing saturation
-  const lighterColor = {
-    h: frontmostColor.h,
-    s: Math.max(0, frontmostColor.s * 0.3), // Reduce saturation to 30%
-    b: Math.min(100, frontmostColor.b + 40), // Increase brightness by 40
-    a: frontmostColor.a
-  };
-  
-  const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
-  colorCache.set(cacheKey, result);
-  lastCacheTime.set(cacheKey, now);
-  return result;
-};
 
 export default function App() {
   const [seed, setSeed] = useState(Math.random() * 10000);
@@ -216,6 +170,7 @@ export default function App() {
   const velocityRef = useRef(0);
   const touchStartYRef = useRef<number | null>(null);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [isMobileDevice, setIsMobileDevice] = useState(isMobile());
   
   // High refresh rate detection
   const [targetFPS, setTargetFPS] = useState(60);
@@ -231,10 +186,11 @@ export default function App() {
   // Audio state
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audio = useAudio({
-    src: '/TheLampIsLow.mp3',
+    src: '/infinitelandscape.js/TheLampIsLow.mp3',
     basePitch: 0.5,
     maxPitch: 1.0,
-    autoPlay: false
+    autoPlay: false,
+    isMobile: isMobileDevice
   });
 
   // Detect high refresh rate displays - improved detection
@@ -293,6 +249,7 @@ export default function App() {
   useEffect(() => {
     const handleResize = () => {
       setViewport({ width: window.innerWidth, height: window.innerHeight });
+      setIsMobileDevice(isMobile());
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -301,11 +258,8 @@ export default function App() {
   // Clean up caches periodically to prevent memory leaks
   useEffect(() => {
     const cleanupInterval = setInterval(() => {
-      if (colorCache.size > 1000) {
-        colorCache.clear();
-      }
-      if (colorCalculationCache.size > 1000) {
-        colorCalculationCache.clear();
+      if (layerDataCache.size > 1000) {
+        layerDataCache.clear();
       }
     }, 30000); // Clean up every 30 seconds
 
@@ -371,20 +325,22 @@ export default function App() {
 
   // Memoize mountain layers calculation so it doesn't recreate on every render
   const mountainLayers = useMemo(() => {
+    const maxLayers = isMobileDevice ? 10 : NUM_LAYERS;
+    
     // Base the vertical reference on height so ultrawide screens still show layers
     let y0 = Math.max(100, viewport.height - 200);
     const i0 = 80; // base spacing per layer (larger => more spread)
     const attenuation = 1.1; // growth of divisor per layer (smaller => more spread in the back)
 
-    const cy: number[] = new Array(NUM_LAYERS + 1);
-    for (let j = 0; j <= NUM_LAYERS; j++) {
-      cy[NUM_LAYERS - j] = y0;
+    const cy: number[] = new Array(maxLayers + 1);
+    for (let j = 0; j <= maxLayers; j++) {
+      cy[maxLayers - j] = y0;
       y0 -= i0 / Math.pow(attenuation, j);
     }
 
-    // Create layer data for mountains 1..NUM_LAYERS
+    // Create layer data for mountains 1..maxLayers
     const layers: { index: number; referenceY: number }[] = [];
-    for (let j = 1; j <= NUM_LAYERS; j++) {
+    for (let j = 1; j <= maxLayers; j++) {
       layers.push({
         index: j,
         referenceY: cy[j]
@@ -392,7 +348,7 @@ export default function App() {
     }
 
     return layers;
-  }, [viewport.height]); // Only depend on height, not width
+  }, [viewport.height, isMobileDevice]); // Depend on height and mobile status
 
   // Reserved for future: manual seed regeneration (kept intentionally unused)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -403,6 +359,12 @@ export default function App() {
   void _handleRegenerate;
 
   const handleWheel: React.WheelEventHandler<HTMLDivElement> = (e) => {
+    // Disable scroll on mobile devices
+    if (isMobileDevice) {
+      e.preventDefault();
+      return;
+    }
+    
     e.preventDefault();
     // Wheel up (negative deltaY) -> forward
     const delta = -e.deltaY * SCROLL_SENSITIVITY;
@@ -420,12 +382,24 @@ export default function App() {
   };
 
   const handleTouchStart: React.TouchEventHandler<HTMLDivElement> = (e) => {
+    // Disable touch scrolling on mobile devices
+    if (isMobileDevice) {
+      e.preventDefault();
+      return;
+    }
+    
     if (e.touches.length > 0) {
       touchStartYRef.current = e.touches[0].clientY;
     }
   };
 
   const handleTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
+    // Disable touch scrolling on mobile devices
+    if (isMobileDevice) {
+      e.preventDefault();
+      return;
+    }
+    
     if (touchStartYRef.current == null) return;
     const currentY = e.touches[0].clientY;
     const delta = currentY - touchStartYRef.current;
@@ -445,13 +419,17 @@ export default function App() {
   };
 
   const handleTouchEnd: React.TouchEventHandler<HTMLDivElement> = () => {
+    // Disable touch scrolling on mobile devices
+    if (isMobileDevice) {
+      return;
+    }
+    
     touchStartYRef.current = null;
   };
 
   return (
     <div 
       className="h-screen w-screen overflow-hidden"
-      style={{ backgroundColor: getBackgroundColor(virtualScroll, isHighRefreshRate) }}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -475,7 +453,7 @@ export default function App() {
           velocityRef.current -= 20 * speedMultiplier;
         } else if (e.key === 'a') {
           setAutoScroll(!autoScroll);
-        } else if (e.key === 'm') {
+        } else if (e.key === 'm' && !isMobileDevice) {
           setAudioEnabled(!audioEnabled);
           if (!audioEnabled) {
             audio.play();
@@ -497,7 +475,7 @@ export default function App() {
         }}
       >
         {(() => {
-          const maxIndex = NUM_LAYERS;
+          const maxIndex = isMobileDevice ? 10 : NUM_LAYERS;
           const layerHeight = viewport.height * HEIGHT_MULTIPLIER;
           const baseRotation = ((virtualScroll * ROTATION_SPEED) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
           const verticalAmplitude = Math.min(CYLINDER_RADIUS_MAX, viewport.height * CYLINDER_RADIUS_FRACTION);
@@ -528,7 +506,7 @@ export default function App() {
               })
               .filter(({ frontness }) => frontness > CULLING_FRONTNESS_THRESHOLD) // Early culling
               .sort((a, b) => b.frontness - a.frontness) // Sort by frontness (closest first)
-              .slice(0, MAX_VISIBLE_LAYERS); // Limit visible layers
+              .slice(0, getMaxVisibleLayers(isMobileDevice)); // Limit visible layers
             
             // Cache the layer data
             layerDataCache.set(layerDataKey, layerData);
@@ -604,7 +582,8 @@ export default function App() {
               const ovalVerticalPosition = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 1 / (1 + OVAL_ELLIPTICAL_FACTOR)) * (1 - OVAL_ELLIPTICAL_FACTOR * 0.3);
               const yOffset = ovalVerticalPosition * verticalAmplitude;
               
-              const translateY = GLOBAL_VERTICAL_OFFSET + yOffset + (1 - frontness) * DEPTH_Y_PARALLAX;
+              const globalVerticalOffset = isMobileDevice ? GLOBAL_VERTICAL_OFFSET_MOBILE : GLOBAL_VERTICAL_OFFSET_DESKTOP;
+              const translateY = globalVerticalOffset + yOffset + (1 - frontness) * DEPTH_Y_PARALLAX;
               
               // No horizontal offset needed
               const horizontalOffset = 0;
@@ -659,7 +638,7 @@ export default function App() {
                 height={layerHeight}
                 layerIndex={layer.index}
                 referenceY={uniformReferenceY}
-                colorPalette={colorPalette}
+                colorPalette={generateColorPalette(maxIndex, seed)}
                 mistColor={cMist}
                 seed={seed + regenerationKey * 1000} // Add regeneration key to seed for new mountain
                 maxIndex={maxIndex}
@@ -673,81 +652,102 @@ export default function App() {
       </div>
       
       
-      {/* Circular Mute/Unmute Button */}
-      <button
-        onClick={() => {
-          setAudioEnabled(!audioEnabled);
-          if (!audioEnabled) {
-            audio.play();
-          } else {
-            audio.pause();
-          }
-        }}
-        style={{
-          position: 'absolute',
-          top: '8px',
-          right: '12px',
-          width: '56px',
-          height: '56px',
-          backgroundColor: 'transparent',
-          color: '#92400e',
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          border: 'none',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          zIndex: 10000
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'scale(0.9)';
-          e.currentTarget.style.color = '#78350f';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.color = '#92400e';
-        }}
-        aria-label={audioEnabled ? "Mute audio" : "Unmute audio"}
-        title={audioEnabled ? "Mute audio" : "Unmute audio"}
-      >
-        {audioEnabled ? (
-          // Unmute icon (speaker with sound waves)
-          <svg 
-            width="24" 
-            height="24" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
-            strokeLinejoin="round"
-          >
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-          </svg>
-        ) : (
-          // Mute icon (speaker with X)
-          <svg 
-            width="24" 
-            height="24" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
-            strokeLinejoin="round"
-          >
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-            <line x1="23" y1="9" x2="17" y2="15"></line>
-            <line x1="17" y1="9" x2="23" y2="15"></line>
-          </svg>
-        )}
-      </button>
+      {/* Circular Mute/Unmute Button - Hidden on mobile */}
+      {!isMobileDevice && (
+        <button
+          onClick={() => {
+            setAudioEnabled(!audioEnabled);
+            if (!audioEnabled) {
+              audio.play();
+            } else {
+              audio.pause();
+            }
+          }}
+          style={{
+            position: 'absolute',
+            top: '8px',
+            right: '12px',
+            width: '56px',
+            height: '56px',
+            backgroundColor: 'transparent',
+            color: '#92400e',
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            zIndex: 10000
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'scale(0.9)';
+            e.currentTarget.style.color = '#78350f';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+            e.currentTarget.style.color = '#92400e';
+          }}
+          aria-label={audioEnabled ? "Mute audio" : "Unmute audio"}
+          title={audioEnabled ? "Mute audio" : "Unmute audio"}
+        >
+          {audioEnabled ? (
+            // Unmute icon (speaker with sound waves)
+            <svg 
+              width="24" 
+              height="24" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+            >
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+          ) : (
+            // Mute icon (speaker with X)
+            <svg 
+              width="24" 
+              height="24" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+            >
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <line x1="23" y1="9" x2="17" y2="15"></line>
+              <line x1="17" y1="9" x2="23" y2="15"></line>
+            </svg>
+          )}
+        </button>
+      )}
 
       
       {/* Animated grain overlay */}
       <div className="noise-overlay" />
+      
+      {/* Rock texture overlay */}
+      <div 
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundImage: `url(${rockTexture})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          opacity: 0.1,
+          mixBlendMode: 'overlay',
+          zIndex: 999, // Underneath god rays
+          pointerEvents: 'none'
+        }}
+      />
       
       {/* God rays lighting effect */}
       <GodRays />
