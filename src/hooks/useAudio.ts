@@ -46,6 +46,7 @@ export const useAudio = ({
       try {
         // Create audio context
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        console.log('Audio context created:', audioContextRef.current.state);
         
         // Create gain node for volume control
         gainNodeRef.current = audioContextRef.current.createGain();
@@ -53,15 +54,24 @@ export const useAudio = ({
         gainNodeRef.current.gain.value = volume;
 
         // Load audio file
+        console.log('Loading audio file:', src);
         const response = await fetch(src);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio file: ${response.status} ${response.statusText}`);
+        }
         const arrayBuffer = await response.arrayBuffer();
         audioBufferRef.current = await audioContextRef.current.decodeAudioData(arrayBuffer);
+        console.log('Audio file loaded successfully');
 
         if (autoPlay) {
           play();
         }
       } catch (error) {
         console.error('Failed to initialize audio:', error);
+        // Reset references on error
+        audioContextRef.current = null;
+        audioBufferRef.current = null;
+        gainNodeRef.current = null;
       }
     };
 
@@ -108,10 +118,21 @@ export const useAudio = ({
         await audioContextRef.current.resume();
       }
 
+      // Stop any existing playback
+      if (sourceNodeRef.current) {
+        try {
+          sourceNodeRef.current.stop();
+        } catch (e) {
+          // Ignore errors from stopping already stopped nodes
+        }
+        sourceNodeRef.current = null;
+      }
+
       // Create new source node
       sourceNodeRef.current = audioContextRef.current.createBufferSource();
       sourceNodeRef.current.buffer = audioBufferRef.current;
       sourceNodeRef.current.playbackRate.value = pitch;
+      sourceNodeRef.current.loop = true; // Loop the audio
       
       // Connect to gain node
       sourceNodeRef.current.connect(gainNodeRef.current!);

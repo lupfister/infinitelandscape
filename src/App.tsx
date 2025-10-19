@@ -201,7 +201,7 @@ export default function App() {
   // Audio state
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audio = useAudio({
-    src: '/infinitelandscape.js/TheLampIsLow.mp3',
+    src: '/TheLampIsLow.mp3',
     basePitch: 0.5,
     maxPitch: 1.0,
     autoPlay: false,
