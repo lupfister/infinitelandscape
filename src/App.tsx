@@ -130,7 +130,7 @@ const EASE = 0.25; // increased for less initial resistance and more responsive 
 const MOMENTUM_DECAY = 0.90; // 0..1, higher = slower stop (increased for sustained momentum)
 const MIN_VELOCITY = 0.015; // threshold to stop momentum (lowered for longer momentum persistence)
 const MAX_VELOCITY = 95; // maximum scrolling velocity to prevent excessive speed
-const AUTO_SCROLL_SPEED = -1.5; // default auto-scroll speed (negative = downward, 4x faster)
+const AUTO_SCROLL_SPEED = 1.5; // default auto-scroll speed (negative = downward, 4x faster)
 const HEIGHT_MULTIPLIER = 1.5; // increase mountain canvas height
 const GLOBAL_VERTICAL_OFFSET_DESKTOP = 500; // shift entire scene upward for desktop
 const GLOBAL_VERTICAL_OFFSET_MOBILE = 500; // shift entire scene upward for mobile
