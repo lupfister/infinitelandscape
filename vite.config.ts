@@ -4,7 +4,7 @@
   import path from 'path';
 
 export default defineConfig({
-  base: '/infinitelandscape.js/', // Replace with your actual repo name
+  base: '/', // Use root path for Netlify deployment
   plugins: [react()],
   resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],

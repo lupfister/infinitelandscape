@@ -177,6 +177,18 @@ export default function App() {
   const [isHighRefreshRate, setIsHighRefreshRate] = useState(false);
   // Auto-scroll state
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Debug logging for deployment
+  useEffect(() => {
+    try {
+      console.log('App component mounted');
+      console.log('Environment:', process.env.NODE_ENV);
+      console.log('Rock texture loaded:', rockTexture);
+    } catch (err) {
+      console.error('Error in App mount:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }, []);
   
   // Track layer regeneration state
   const [layerRegenerationKeys, setLayerRegenerationKeys] = useState<Map<number, number>>(new Map());
@@ -426,6 +438,24 @@ export default function App() {
     
     touchStartYRef.current = null;
   };
+
+  // Error boundary for debugging
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-red-100">
+        <div className="text-center p-8">
+          <h1 className="text-2xl font-bold text-red-800 mb-4">Error Loading App</h1>
+          <p className="text-red-600 mb-4">{error}</p>
+          <button 
+            onClick={() => setError(null)} 
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
