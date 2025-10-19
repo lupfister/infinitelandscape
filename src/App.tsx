@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import MountainLayer from './components/MountainLayer';
 import GodRays from './components/GodRays';
+import { useAudio } from './hooks/useAudio';
 
 interface Color {
   h: number;
@@ -76,9 +77,12 @@ const CYLINDER_RADIUS_FRACTION = 10; // fraction of viewport height
 const CYLINDER_RADIUS_MAX = 10000; // hard cap to avoid excessive travel
 
 
-// Cached color calculations for performance
+// Cached color calculations for performance - optimized for 120fps
 const colorCache = new Map<string, string>();
 const colorCalculationCache = new Map<number, Color>();
+const layerDataCache = new Map<string, any>();
+const lastCacheTime = new Map<string, number>();
+// Removed unused CACHE_DURATION constant
 
 // Optimized color calculation functions
 const hsbToRgb = (h: number, s: number, b: number, a: number = 360): string => {
@@ -133,12 +137,19 @@ const getColorForDepth = (depth: number, palette: Color[]): Color => {
 };
 
 // Function to get background color based on the current frontmost mountain layer
-const getBackgroundColor = (currentScroll: number): string => {
-  // Use a coarser resolution for background color calculation to improve performance
-  const scrollKey = Math.floor(currentScroll * 10) / 10; // Round to 0.1 precision
+const getBackgroundColor = (currentScroll: number, isHighRefresh: boolean = false): string => {
+  // Use adaptive precision based on refresh rate for better performance
+  const precision = isHighRefresh ? 5 : 10; // Higher precision for 120fps
+  const scrollKey = Math.floor(currentScroll * precision) / precision;
+  const cacheKey = scrollKey.toString();
   
-  if (colorCache.has(scrollKey.toString())) {
-    return colorCache.get(scrollKey.toString())!;
+  // Check cache with time-based expiration
+  const now = performance.now();
+  const lastTime = lastCacheTime.get(cacheKey) || 0;
+  const cacheDuration = isHighRefresh ? 8 : 16; // 8ms for 120fps, 16ms for 60fps
+  
+  if (colorCache.has(cacheKey) && (now - lastTime) < cacheDuration) {
+    return colorCache.get(cacheKey)!;
   }
   
   // Calculate which layer is currently frontmost based on scroll position
@@ -176,7 +187,8 @@ const getBackgroundColor = (currentScroll: number): string => {
     };
     
     const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
-    colorCache.set(scrollKey.toString(), result);
+    colorCache.set(cacheKey, result);
+    lastCacheTime.set(cacheKey, now);
     return result;
   }
   
@@ -192,7 +204,8 @@ const getBackgroundColor = (currentScroll: number): string => {
   };
   
   const result = hsbToRgb(lighterColor.h, lighterColor.s, lighterColor.b, lighterColor.a);
-  colorCache.set(scrollKey.toString(), result);
+  colorCache.set(cacheKey, result);
+  lastCacheTime.set(cacheKey, now);
   return result;
 };
 
@@ -204,17 +217,78 @@ export default function App() {
   const touchStartYRef = useRef<number | null>(null);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   
+  // High refresh rate detection
+  const [targetFPS, setTargetFPS] = useState(60);
+  const [isHighRefreshRate, setIsHighRefreshRate] = useState(false);
   // Auto-scroll state
   const [autoScroll, setAutoScroll] = useState(true);
-  
-  // Debug rotation state
-  const [debugRotation, setDebugRotation] = useState(false);
-  const [debugRotationAngle, setDebugRotationAngle] = useState(45); // degrees
   
   // Track layer regeneration state
   const [layerRegenerationKeys, setLayerRegenerationKeys] = useState<Map<number, number>>(new Map());
   const lastVisibleLayersRef = useRef<Set<number>>(new Set());
   const isInitializedRef = useRef(false);
+
+  // Audio state
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const audio = useAudio({
+    src: '/TheLampIsLow.mp3',
+    basePitch: 0.5,
+    maxPitch: 1.0,
+    autoPlay: false
+  });
+
+  // Detect high refresh rate displays - improved detection
+  useEffect(() => {
+    let frameCount = 0;
+    let startTime = performance.now();
+    let rafId: number;
+    let measurements: number[] = [];
+    let measurementCount = 0;
+    const maxMeasurements = 3; // Take 3 measurements for accuracy
+
+    const measureRefreshRate = () => {
+      frameCount++;
+      const currentTime = performance.now();
+      const elapsed = currentTime - startTime;
+      
+      if (elapsed >= 2000) { // Measure for 2 seconds for better accuracy
+        const fps = Math.round((frameCount * 1000) / elapsed);
+        measurements.push(fps);
+        measurementCount++;
+        
+        console.log(`Refresh rate measurement ${measurementCount}: ${fps}fps`);
+        
+        if (measurementCount < maxMeasurements) {
+          // Reset for next measurement
+          frameCount = 0;
+          startTime = currentTime;
+          rafId = requestAnimationFrame(measureRefreshRate);
+        } else {
+          // Calculate average of all measurements
+          const avgFps = Math.round(measurements.reduce((a, b) => a + b, 0) / measurements.length);
+          const isHighRefresh = avgFps >= 90; // Lowered threshold to 90fps for better detection
+          
+          setTargetFPS(isHighRefresh ? 120 : 60);
+          setIsHighRefreshRate(isHighRefresh);
+          console.log(`Final refresh rate detection: ${avgFps}fps (avg of ${measurements.join(', ')}), using ${isHighRefresh ? 120 : 60}fps target`);
+        }
+      } else {
+        rafId = requestAnimationFrame(measureRefreshRate);
+      }
+    };
+
+    // Delay the measurement to ensure the page is fully loaded
+    const timeoutId = setTimeout(() => {
+      rafId = requestAnimationFrame(measureRefreshRate);
+    }, 1000);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -241,10 +315,10 @@ export default function App() {
   useEffect(() => {
     let rafId: number;
     let lastUpdateTime = 0;
-    const targetFPS = 60;
     const frameInterval = 1000 / targetFPS;
     
     const animate = (currentTime: number) => {
+      
       // Throttle updates to target FPS
       if (currentTime - lastUpdateTime < frameInterval) {
         rafId = window.requestAnimationFrame(animate);
@@ -255,6 +329,11 @@ export default function App() {
       // Apply auto-scroll if enabled
       if (autoScroll) {
         scrollTargetRef.current += AUTO_SCROLL_SPEED;
+        
+        // Update audio pitch based on auto-scroll speed if audio is enabled
+        if (audioEnabled) {
+          audio.setPitchFromVelocity(AUTO_SCROLL_SPEED);
+        }
       }
 
       // Apply momentum to the target position
@@ -263,6 +342,11 @@ export default function App() {
         velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
         
         scrollTargetRef.current += velocityRef.current;
+
+        // Update audio pitch based on velocity if audio is enabled
+        if (audioEnabled) {
+          audio.setPitchFromVelocity(velocityRef.current);
+        }
 
         // Decay velocity
         velocityRef.current *= MOMENTUM_DECAY;
@@ -273,7 +357,9 @@ export default function App() {
       const next = virtualScroll + (target - virtualScroll) * EASE;
       
       // Only update state if there's a meaningful change
-      if (Math.abs(next - virtualScroll) > 0.001) {
+      // Use smaller threshold for higher refresh rates for smoother animation
+      const changeThreshold = isHighRefreshRate ? 0.0005 : 0.001;
+      if (Math.abs(next - virtualScroll) > changeThreshold) {
         setVirtualScroll(next);
       }
       
@@ -281,7 +367,7 @@ export default function App() {
     };
     rafId = window.requestAnimationFrame(animate);
     return () => cancelAnimationFrame(rafId);
-  }, [virtualScroll]);
+  }, [virtualScroll, targetFPS, isHighRefreshRate, autoScroll]);
 
   // Memoize mountain layers calculation so it doesn't recreate on every render
   const mountainLayers = useMemo(() => {
@@ -365,7 +451,7 @@ export default function App() {
   return (
     <div 
       className="h-screen w-screen overflow-hidden"
-      style={{ backgroundColor: getBackgroundColor(virtualScroll) }}
+      style={{ backgroundColor: getBackgroundColor(virtualScroll, isHighRefreshRate) }}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -387,12 +473,15 @@ export default function App() {
           velocityRef.current += 20 * speedMultiplier;
         } else if (e.key === 'ArrowDown' || e.key === 's') {
           velocityRef.current -= 20 * speedMultiplier;
-        } else if (e.key === 'd') {
-          setDebugRotation(!debugRotation);
-        } else if (e.key === 'r') {
-          setDebugRotationAngle(prev => (prev + 15) % 360);
         } else if (e.key === 'a') {
           setAutoScroll(!autoScroll);
+        } else if (e.key === 'm') {
+          setAudioEnabled(!audioEnabled);
+          if (!audioEnabled) {
+            audio.play();
+          } else {
+            audio.pause();
+          }
         }
       }}
     >
@@ -415,32 +504,46 @@ export default function App() {
 
           const uniformReferenceY = Math.max(100, viewport.height - 200);
           
-          // Pre-calculate all layer data for better performance
-          const layerData = mountainLayers
-            .map((layer) => {
-              const baseAngle = (layer.index / maxIndex) * Math.PI * 2;
-              const angle = baseAngle + baseRotation;
-              const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
-              
-              return {
-                layer,
-                frontness,
-                angle
-              };
-            })
-            .filter(({ frontness }) => frontness > CULLING_FRONTNESS_THRESHOLD) // Early culling
-            .sort((a, b) => b.frontness - a.frontness) // Sort by frontness (closest first)
-            .slice(0, MAX_VISIBLE_LAYERS); // Limit visible layers
+          // Pre-calculate all layer data for better performance with caching
+          const layerDataKey = `${baseRotation.toFixed(4)}-${maxIndex}`;
+          const now = performance.now();
+          const lastLayerDataTime = lastCacheTime.get(layerDataKey) || 0;
+          const layerCacheDuration = 8; // Optimized for 120fps by default
+          
+          let layerData;
+          if (layerDataCache.has(layerDataKey) && (now - lastLayerDataTime) < layerCacheDuration) {
+            layerData = layerDataCache.get(layerDataKey);
+          } else {
+            layerData = mountainLayers
+              .map((layer) => {
+                const baseAngle = (layer.index / maxIndex) * Math.PI * 2;
+                const angle = baseAngle + baseRotation;
+                const frontness = (Math.cos(angle) + 1) / 2; // 0 (back) .. 1 (front)
+                
+                return {
+                  layer,
+                  frontness,
+                  angle
+                };
+              })
+              .filter(({ frontness }) => frontness > CULLING_FRONTNESS_THRESHOLD) // Early culling
+              .sort((a, b) => b.frontness - a.frontness) // Sort by frontness (closest first)
+              .slice(0, MAX_VISIBLE_LAYERS); // Limit visible layers
+            
+            // Cache the layer data
+            layerDataCache.set(layerDataKey, layerData);
+            lastCacheTime.set(layerDataKey, now);
+          }
           
           // Track visible layers and trigger regeneration for newly visible layers
-          const currentVisibleLayers = new Set(layerData.map(({ layer }) => layer.index));
+          const currentVisibleLayers = new Set<number>(layerData.map(({ layer }: any) => layer.index));
           const lastVisibleLayers = lastVisibleLayersRef.current;
           
           // Only check for regeneration after initial load
           if (isInitializedRef.current) {
             // Check for layers that became visible (were culled before, now visible)
             const newlyVisibleLayers = new Set<number>();
-            currentVisibleLayers.forEach(layerIndex => {
+            currentVisibleLayers.forEach((layerIndex: number) => {
               if (!lastVisibleLayers.has(layerIndex)) {
                 newlyVisibleLayers.add(layerIndex);
               }
@@ -466,21 +569,30 @@ export default function App() {
           lastVisibleLayersRef.current = currentVisibleLayers;
           
           // Continue with the mapping
-          const processedLayerData = layerData.map(({ layer, frontness, angle }) => {
-              // Calculate opacity based on frontness for smooth fade-out
+          const processedLayerData = layerData.map(({ layer, frontness, angle }: any) => {
+              // Calculate opacity based on frontness for atmospheric perspective
               let opacity = 1;
-              if (frontness < CULLING_FRONTNESS_THRESHOLD) {
-                // Smooth fade-out as frontness approaches the threshold
-                const fadeRange = 0.15; // Fade over 0.15 units of frontness (increased for smoother transitions)
-                const fadeStart = CULLING_FRONTNESS_THRESHOLD;
-                const fadeEnd = Math.max(0, fadeStart - fadeRange);
-                
-                if (frontness <= fadeEnd) {
-                  opacity = 0; // Completely transparent
-                } else {
-                  // Smooth transition from 0 to 1 opacity
-                  opacity = (frontness - fadeEnd) / (fadeStart - fadeEnd);
-                }
+              
+              // Create atmospheric perspective: distant layers (low frontness) have lower opacity
+              const atmosphericFadeStart = 0.3; // Start fading distant layers when frontness < 0.3
+              const atmosphericFadeEnd = 0.1; // Complete fade when frontness < 0.1
+              const cullingFadeStart = CULLING_FRONTNESS_THRESHOLD;
+              const cullingFadeEnd = Math.max(0, cullingFadeStart - 0.15);
+              
+              if (frontness <= cullingFadeEnd) {
+                // Complete culling for very distant layers
+                opacity = 0;
+              } else if (frontness <= cullingFadeStart) {
+                // Smooth fade-out for culling threshold
+                opacity = (frontness - cullingFadeEnd) / (cullingFadeStart - cullingFadeEnd);
+              } else if (frontness <= atmosphericFadeStart) {
+                // Atmospheric perspective fade for distant layers
+                const atmosphericOpacity = (frontness - atmosphericFadeEnd) / (atmosphericFadeStart - atmosphericFadeEnd);
+                // Scale opacity from 0.3 to 1.0 for atmospheric effect
+                opacity = 0.3 + (atmosphericOpacity * 0.7);
+              } else {
+                // Close layers maintain full opacity
+                opacity = 1;
               }
               
               // Create oval movement with slower, longer movement at top and bottom
@@ -494,15 +606,8 @@ export default function App() {
               
               const translateY = GLOBAL_VERTICAL_OFFSET + yOffset + (1 - frontness) * DEPTH_Y_PARALLAX;
               
-              // Calculate horizontal offset for debug rotation
-              let horizontalOffset = 0;
-              if (debugRotation) {
-                const rotationRad = (debugRotationAngle * Math.PI) / 180;
-                // Apply horizontal rotation based on frontness and rotation angle
-                // This creates a fake horizontal rotation effect
-                const horizontalRotationFactor = Math.sin(rotationRad) * frontness;
-                horizontalOffset = horizontalRotationFactor * viewport.width * 0.3;
-              }
+              // No horizontal offset needed
+              const horizontalOffset = 0;
               
               // Base z-index on frontness with better separation to prevent z-fighting
               // Use higher precision and ensure each layer gets a unique z-index
@@ -524,7 +629,7 @@ export default function App() {
               };
             });
           
-          return processedLayerData.map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor, opacity }) => {
+          return processedLayerData.map(({ layer, frontness, translateY, horizontalOffset, zIndex, scaleFactor, opacity }: any) => {
             const regenerationKey = layerRegenerationKeys.get(layer.index) || 0;
             
             // Calculate progressive blur based on distance (frontness)
@@ -567,41 +672,79 @@ export default function App() {
         })()}
       </div>
       
-      {/* Debug UI */}
-      {(debugRotation || !autoScroll) && (
-        <div className="absolute top-4 left-4 bg-black bg-opacity-75 text-white p-4 rounded-lg font-mono text-sm">
-          {debugRotation && (
-            <div className="mb-2">
-              <strong>Debug Rotation Mode</strong>
-            </div>
-          )}
-          {debugRotation && <div>Angle: {debugRotationAngle}°</div>}
-          <div className={debugRotation ? "mt-2" : ""}>
-            Auto-scroll: {autoScroll ? "ON" : "OFF"}
-          </div>
-          <div className="text-xs text-gray-300 mt-2">
-            Press 'A' to toggle auto-scroll<br/>
-            {debugRotation && (
-              <>
-                Press 'D' to toggle debug mode<br/>
-                Press 'R' to rotate (+15°)
-              </>
-            )}
-          </div>
-        </div>
-      )}
       
-      {/* Debug rotation indicator line */}
-      {debugRotation && (
-        <div 
-          className="absolute top-1/2 left-0 w-full h-0.5 bg-red-500 opacity-50 pointer-events-none"
-          style={{
-            transform: `rotate(${debugRotationAngle}deg)`,
-            transformOrigin: 'center',
-            zIndex: 10000
-          }}
-        />
-      )}
+      {/* Circular Mute/Unmute Button */}
+      <button
+        onClick={() => {
+          setAudioEnabled(!audioEnabled);
+          if (!audioEnabled) {
+            audio.play();
+          } else {
+            audio.pause();
+          }
+        }}
+        style={{
+          position: 'absolute',
+          top: '8px',
+          right: '12px',
+          width: '56px',
+          height: '56px',
+          backgroundColor: 'transparent',
+          color: '#92400e',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          border: 'none',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          zIndex: 10000
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(0.9)';
+          e.currentTarget.style.color = '#78350f';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.color = '#92400e';
+        }}
+        aria-label={audioEnabled ? "Mute audio" : "Unmute audio"}
+        title={audioEnabled ? "Mute audio" : "Unmute audio"}
+      >
+        {audioEnabled ? (
+          // Unmute icon (speaker with sound waves)
+          <svg 
+            width="24" 
+            height="24" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2" 
+            strokeLinecap="round" 
+            strokeLinejoin="round"
+          >
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+        ) : (
+          // Mute icon (speaker with X)
+          <svg 
+            width="24" 
+            height="24" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2" 
+            strokeLinecap="round" 
+            strokeLinejoin="round"
+          >
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        )}
+      </button>
+
       
       {/* Animated grain overlay */}
       <div className="noise-overlay" />

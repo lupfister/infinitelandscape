@@ -174,8 +174,23 @@ function MountainLayerImpl({
     return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(bl * 255)}, ${alpha})`;
   };
 
-  const map = (value: number, start1: number, stop1: number, start2: number, stop2: number): number => {
-    return start2 + (stop2 - start2) * ((value - start1) / (stop1 - start1));
+
+  // Helper function to blend two colors smoothly
+  const blendColors = (color1: string, color2: string, ratio: number): string => {
+    // Extract RGB values from rgba strings
+    const extractRgb = (color: string) => {
+      const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      return match ? [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])] : [0, 0, 0];
+    };
+    
+    const [r1, g1, b1] = extractRgb(color1);
+    const [r2, g2, b2] = extractRgb(color2);
+    
+    const r = Math.round(r1 * (1 - ratio) + r2 * ratio);
+    const g = Math.round(g1 * (1 - ratio) + g2 * ratio);
+    const b = Math.round(b1 * (1 - ratio) + b2 * ratio);
+    
+    return `rgba(${r}, ${g}, ${b}, 1)`;
   };
 
   // Generate a random color for this layer based on layerIndex and seed
@@ -186,7 +201,7 @@ function MountainLayerImpl({
     
     // Determine which color family to use based on layer index and seed
     // This creates "zones" of similar colors
-    const familySeed = Math.floor((layerIndex + seed * 0.1) / 3) % 3; // Changes every ~3 layers
+    const familySeed = Math.floor((layerIndex + seed * 0.1) / 4) % 3; // Changes every 4 layers
     const familyNames = Object.keys(COLOR_FAMILIES);
     const selectedFamily = familyNames[familySeed] as keyof typeof COLOR_FAMILIES;
     const familyColors = COLOR_FAMILIES[selectedFamily];
@@ -208,7 +223,7 @@ function MountainLayerImpl({
 
 
 
-  // Separate effect for color updates with caching
+  // Separate effect for color updates with caching - optimized for 120fps
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !shapePathRef.current) return;
@@ -221,6 +236,7 @@ function MountainLayerImpl({
     const currentZIndex = lastZIndexRef.current;
     const randomColor = getRandomColorForLayer(layerIndex, seed);
     
+    // More aggressive caching for 120fps - only redraw when absolutely necessary
     if (currentColor && currentZIndex === zIndex && currentColor.includes(randomColor)) {
       return; // No need to redraw
     }
@@ -254,19 +270,36 @@ function MountainLayerImpl({
     const solidColor = getGrayColorForZIndex(zIndex, colorPalette);
     const solidColorRgb = hsbToRgb(solidColor.h, solidColor.s, solidColor.b, solidColor.a);
 
-    // Draw mountain shape with solid color using stored path
-    ctx.fillStyle = solidColorRgb;
+    // Draw mountain shape with gradient from current color at top to white at bottom
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, solidColorRgb); // Current color at top
+    gradient.addColorStop(0.5, solidColorRgb); // Keep original color until 80% down
+    gradient.addColorStop(1, blendColors(solidColorRgb, 'rgba(255, 255, 255, 1)', 0.8)); // 20% white blend
+    
+    ctx.fillStyle = gradient;
     ctx.fill(shapePathRef.current!);
 
-    // Apply random color overlay with blend mode
+    // Apply flat random color overlay with blend mode
     ctx.globalCompositeOperation = 'overlay';
     ctx.fillStyle = randomColor;
+    ctx.fill(shapePathRef.current!);
+    
+    // Apply separate gradient overlay that fades to white
+    ctx.globalCompositeOperation = 'multiply';
+    const gradientOverlay = ctx.createLinearGradient(0, 0, 0, height);
+    gradientOverlay.addColorStop(0, 'rgba(255, 255, 255, 1)'); // White at top (no effect)
+    gradientOverlay.addColorStop(0.8, 'rgba(255, 255, 255, 1)'); // Keep white until 80% down
+    gradientOverlay.addColorStop(0.9, 'rgba(255, 255, 255, 0.8)'); // Start fading
+    gradientOverlay.addColorStop(0.95, 'rgba(255, 255, 255, 0.5)'); // More fade
+    gradientOverlay.addColorStop(0.98, 'rgba(255, 255, 255, 0.2)'); // Almost transparent
+    gradientOverlay.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fully transparent at bottom
+    ctx.fillStyle = gradientOverlay;
     ctx.fill(shapePathRef.current!);
     
     // Apply rock texture with color dodge blend mode
     if (rockTexture && textureNoise) {
       ctx.globalCompositeOperation = 'color-dodge';
-      ctx.globalAlpha = 0.2; // Reduce opacity by half
+      ctx.globalAlpha = 0.1; // Reduce opacity by half
       ctx.save();
       ctx.clip(shapePathRef.current!);
       
@@ -321,22 +354,6 @@ function MountainLayerImpl({
         0, mistStartY, 
         width, height - mistStartY
       );
-      
-      ctx.restore();
-      
-      // Add white gradient overlay for additional mist effect
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      
-      // Create white to white gradient with opacity variation
-      const gradient = ctx.createLinearGradient(0, mistStartY, 0, height);
-      const startOpacity = 0;
-      const endOpacity = baseOpacity / 480; // Half the intensity of the image
-      gradient.addColorStop(0, `rgba(255, 255, 255, ${startOpacity})`);
-      gradient.addColorStop(1, `rgba(255, 255, 255, ${endOpacity})`);
-      
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, mistStartY, width, height - mistStartY);
       
       ctx.restore();
     }

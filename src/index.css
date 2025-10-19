@@ -678,11 +678,13 @@ body {
   background-size: 200px 200px;
   mix-blend-mode: overlay;
   opacity: 0.05;
-  animation: noise-animation 0.8s infinite steps(1);
+  animation: noise-animation 0.4s infinite steps(1); /* Faster for 120fps */
   pointer-events: none;
   z-index: 10000;
   will-change: background-position;
   transform: translateZ(0); /* Force hardware acceleration */
+  backface-visibility: hidden; /* Additional 120fps optimization */
+  perspective: 1000px; /* Additional 120fps optimization */
 }
 
 @keyframes noise-animation {

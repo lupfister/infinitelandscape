@@ -8,25 +8,25 @@ import { GodRays as GodRays1 } from '@paper-design/shaders-react';
  */
 export default function GodRays() {
   // Adjustable intensity settings - modify these values:
-  const INTENSITY = 0.8;        // Main intensity (0.1 = subtle, 0.5 = moderate, 0.8 = strong)
-  const MID_INTENSITY = 0.5;    // Mid-range intensity (0.3 = subtle, 0.6 = moderate, 0.9 = strong)
-  const BLOOM = 0.8;            // Bloom intensity (0.3 = subtle, 0.6 = moderate, 1.0 = strong)
-  const DENSITY = 0.08;         // Ray density (0.05 = sparse, 0.1 = moderate, 0.15 = dense)
+  const INTENSITY = 0.4;        // Main intensity (0.1 = subtle, 0.5 = moderate, 0.8 = strong)
+  const MID_INTENSITY = 0.4;    // Mid-range intensity (0.3 = subtle, 0.6 = moderate, 0.9 = strong)
+  const BLOOM = 0.7;            // Bloom intensity (0.3 = subtle, 0.6 = moderate, 1.0 = strong)
+  const DENSITY = 0.06;         // Ray density (0.05 = sparse, 0.1 = moderate, 0.15 = dense)
   
   return (
     <GodRays1 
       colorBack="#00000000" 
-      colors={['#FFFFFF1F', '#FFFFFF3D', '#FFFFFF29']} 
+      colors={['#00696E', '#FFE200', '#FF0005']} 
       colorBloom="#FFE19C" 
       offsetX={0} 
-      offsetY={-0.65} 
+      offsetY={-0.8} 
       intensity={INTENSITY} 
       spotty={0.59} 
       midSize={1} 
       midIntensity={MID_INTENSITY} 
       density={DENSITY} 
       bloom={BLOOM} 
-      speed={1.28} 
+      speed={2} 
       scale={1} 
       frame={16742.770000000215} 
       style={{ 
@@ -36,7 +36,7 @@ export default function GodRays() {
         position: 'absolute',
         top: 0,
         left: 0,
-        mixBlendMode: 'multiply',
+        mixBlendMode: 'screen',
         pointerEvents: 'none',
         zIndex: 1000
       }} 
