@@ -1,46 +1,77 @@
 
-import { StrictMode } from "react";
+import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import App from "./App";
 import "./index.css";
 
-// Simple React test component
-function SimpleTestApp() {
-  return (
-    <div style={{ 
-      padding: '20px', 
-      backgroundColor: 'white', 
-      margin: '20px',
-      borderRadius: '8px',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
-    }}>
-      <h1 style={{ color: '#333', marginBottom: '10px' }}>
-        🎉 React is Working!
-      </h1>
-      <p style={{ color: '#666' }}>
-        If you can see this, React has mounted successfully.
-      </p>
-      <p style={{ color: '#666', fontSize: '14px' }}>
-        Environment: {process.env.NODE_ENV}
-      </p>
-    </div>
-  );
+// Error boundary component to catch App errors
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ 
+          padding: '20px', 
+          backgroundColor: '#fee', 
+          margin: '20px',
+          borderRadius: '8px',
+          border: '2px solid #f00'
+        }}>
+          <h1 style={{ color: '#c00', marginBottom: '10px' }}>
+            ❌ App Error Detected
+          </h1>
+          <p style={{ color: '#666' }}>
+            There's an error in the App component that's preventing it from rendering.
+          </p>
+          <details style={{ marginTop: '10px' }}>
+            <summary style={{ cursor: 'pointer', color: '#666' }}>Error Details</summary>
+            <pre style={{ 
+              backgroundColor: '#f5f5f5', 
+              padding: '10px', 
+              marginTop: '10px',
+              fontSize: '12px',
+              overflow: 'auto'
+            }}>
+              {this.state.error?.toString()}
+            </pre>
+          </details>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
-console.log("Starting React app...");
+console.log("Starting React app with App component...");
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   console.error("Root element not found!");
 } else {
-  console.log("Root element found, mounting React...");
+  console.log("Root element found, mounting React with App...");
   try {
     const root = createRoot(rootElement);
     root.render(
       <StrictMode>
-        <SimpleTestApp />
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
       </StrictMode>
     );
-    console.log("React mounted successfully!");
+    console.log("React mounted successfully with App!");
   } catch (error) {
     console.error("Error mounting React:", error);
   }
