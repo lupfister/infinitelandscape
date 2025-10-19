@@ -30,10 +30,12 @@ export const useAudio = ({
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolumeState] = useState(0.3);
   const [pitch, setPitchState] = useState(basePitch);
+  const [useFallback, setUseFallback] = useState(false);
 
   // Initialize audio context (skip on mobile)
   useEffect(() => {
@@ -57,21 +59,37 @@ export const useAudio = ({
         console.log('Loading audio file:', src);
         const response = await fetch(src);
         if (!response.ok) {
-          throw new Error(`Failed to fetch audio file: ${response.status} ${response.statusText}`);
+          throw new Error(`Failed to fetch audio file: ${response.status} ${response.statusText}. URL: ${src}`);
         }
+        console.log('Audio file fetch successful, content-type:', response.headers.get('content-type'));
         const arrayBuffer = await response.arrayBuffer();
+        console.log('Audio file array buffer size:', arrayBuffer.byteLength);
         audioBufferRef.current = await audioContextRef.current.decodeAudioData(arrayBuffer);
-        console.log('Audio file loaded successfully');
+        console.log('Audio file decoded successfully, duration:', audioBufferRef.current.duration);
 
         if (autoPlay) {
           play();
         }
       } catch (error) {
-        console.error('Failed to initialize audio:', error);
+        console.error('Failed to initialize Web Audio API:', error);
+        console.log('Falling back to HTML5 Audio...');
+        
         // Reset references on error
         audioContextRef.current = null;
         audioBufferRef.current = null;
         gainNodeRef.current = null;
+        
+        // Initialize fallback HTML5 Audio
+        try {
+          fallbackAudioRef.current = new Audio(src);
+          fallbackAudioRef.current.loop = true;
+          fallbackAudioRef.current.volume = volume;
+          fallbackAudioRef.current.preload = 'auto';
+          setUseFallback(true);
+          console.log('HTML5 Audio fallback initialized successfully');
+        } catch (fallbackError) {
+          console.error('Failed to initialize HTML5 Audio fallback:', fallbackError);
+        }
       }
     };
 
@@ -92,6 +110,9 @@ export const useAudio = ({
     if (gainNodeRef.current) {
       gainNodeRef.current.gain.value = volume;
     }
+    if (fallbackAudioRef.current) {
+      fallbackAudioRef.current.volume = volume;
+    }
   }, [volume]);
 
   const play = useCallback(async () => {
@@ -100,17 +121,36 @@ export const useAudio = ({
       return;
     }
 
-    if (!audioContextRef.current || !audioBufferRef.current || isPlaying) {
+    if (isPlaying) {
+      console.log('Audio already playing');
+      return;
+    }
+
+    // Use fallback HTML5 Audio if Web Audio API failed
+    if (useFallback && fallbackAudioRef.current) {
+      try {
+        console.log('Playing audio with HTML5 Audio fallback...');
+        await fallbackAudioRef.current.play();
+        setIsPlaying(true);
+        console.log('HTML5 Audio playback started successfully');
+        return;
+      } catch (error) {
+        console.error('Failed to play HTML5 Audio:', error);
+        return;
+      }
+    }
+
+    if (!audioContextRef.current || !audioBufferRef.current) {
       console.log('Audio play blocked:', {
         hasContext: !!audioContextRef.current,
         hasBuffer: !!audioBufferRef.current,
-        isPlaying
+        useFallback
       });
       return;
     }
 
     try {
-      console.log('Attempting to play audio...');
+      console.log('Attempting to play audio with Web Audio API...');
       
       // Resume audio context if suspended (required for user interaction)
       if (audioContextRef.current.state === 'suspended') {
@@ -147,15 +187,21 @@ export const useAudio = ({
       // Start playback
       sourceNodeRef.current.start();
       setIsPlaying(true);
-      console.log('Audio playback started successfully');
+      console.log('Web Audio API playback started successfully');
     } catch (error) {
-      console.error('Failed to play audio:', error);
+      console.error('Failed to play audio with Web Audio API:', error);
     }
-  }, [isPlaying, pitch]);
+  }, [isPlaying, pitch, useFallback]);
 
   const pause = useCallback(() => {
     if (isMobile) {
       console.log('Audio pause blocked on mobile device');
+      return;
+    }
+
+    if (useFallback && fallbackAudioRef.current && isPlaying) {
+      fallbackAudioRef.current.pause();
+      setIsPlaying(false);
       return;
     }
 
@@ -164,7 +210,7 @@ export const useAudio = ({
       sourceNodeRef.current = null;
       setIsPlaying(false);
     }
-  }, [isPlaying, isMobile]);
+  }, [isPlaying, isMobile, useFallback]);
 
   const setVolume = useCallback((newVolume: number) => {
     setVolumeState(Math.max(0, Math.min(1, newVolume)));
